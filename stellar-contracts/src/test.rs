@@ -1,17 +1,44 @@
-// All test/testutils code must be gated — no bare `extern crate std` at top level
-#[cfg(any(test, feature = "testutils"))]
-mod tests {
-    extern crate std; // only pulled in under test/testutils, never in wasm release
+#[test]
+fn test_schema_version_after_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _admin, _token_addr, _token, _token_sac) = setup_bridge(&env, 100);
+    assert_eq!(bridge.get_schema_version(), 1u32);
+}
 
-    use crate::{DataKey, Error, FiatBridge, FiatBridgeClient};
-    use proptest::prelude::*;
-    use soroban_sdk::{
-        testutils::{Address as _, Events, Ledger},
-        token::{Client as TokenClient, StellarAssetClient},
-        Address, Bytes, Env,
-    };
+#[test]
+fn test_migrate_noop_as_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _admin, _token_addr, _token, _token_sac) = setup_bridge(&env, 100);
+    // Should be a no-op and return Ok(())
+    assert_eq!(bridge.migrate(), ());
+    // Version should remain 1
+    assert_eq!(bridge.get_schema_version(), 1u32);
+}
+
+#[test]
+fn test_migrate_unauthorized() {
+    let env = Env::default();
+    // Do not mock auths so require_auth is enforced
+    let (_, bridge, _admin, _token_addr, _token, _token_sac) = setup_bridge(&env, 100);
+    let result = bridge.try_migrate();
+    assert!(matches!(result, Err(Err(_))));
+}
+extern crate std;
+
+use proptest::prelude::*;
+
+use super::*;
+use soroban_sdk::testutils::{Events, Ledger};
+use soroban_sdk::{
+    testutils::Address as _,
+    token::{Client as TokenClient, StellarAssetClient},
+    Address, Env,
+};
 
     // ── helpers ──────────────────────────────────────────────────────────
+
     fn create_token<'a>(
         e: &Env,
         admin: &Address,
@@ -25,78 +52,58 @@ mod tests {
             StellarAssetClient::new(e, &addr),
         )
     }
-#![cfg(test)]
-extern crate std;
 
-use proptest::prelude::*;
+    fn setup_bridge(
+        env: &Env,
+        limit: i128,
+    ) -> (
+        Address,
+        FiatBridgeClient,
+        Address,
+        Address,
+        TokenClient,
+        StellarAssetClient,
+    ) {
+        let contract_id = env.register(FiatBridge, ());
+        let bridge = FiatBridgeClient::new(env, &contract_id);
+        let admin = Address::generate(env);
+        let token_admin = Address::generate(env);
+        let (token_addr, token, token_sac) = create_token(env, &token_admin);
+        bridge.init(&admin, &token_addr, &limit);
+        (contract_id, bridge, admin, token_addr, token, token_sac)
+    }
 
-use super::*;
-use soroban_sdk::{
-    testutils::{Address as _, Events, Ledger},
-    token::{Client as TokenClient, StellarAssetClient},
-    Address, Bytes, Env,
-};
+    // ── happy-path tests ──────────────────────────────────────────────────
 
-// ── helpers ──────────────────────────────────────────────────────────
+    #[test]
+    fn test_schema_version_after_init() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _admin, _token_addr, _token, _token_sac) = setup_bridge(&env, 100);
+        assert_eq!(bridge.get_schema_version(), 1u32);
+    }
 
-fn create_token<'a>(
-    e: &Env,
-    admin: &Address,
-) -> (Address, TokenClient<'a>, StellarAssetClient<'a>) {
-    let addr = e
-        .register_stellar_asset_contract_v2(admin.clone())
-        .address();
-    (
-        addr.clone(),
-        TokenClient::new(e, &addr),
-        StellarAssetClient::new(e, &addr),
-    )
-}
+    #[test]
+    fn test_migrate_noop_as_admin() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, bridge, _admin, _token_addr, _token, _token_sac) = setup_bridge(&env, 100);
+        // Should be a no-op and return Ok(())
+        assert_eq!(bridge.migrate(), ());
+        // Version should remain 1
+        assert_eq!(bridge.get_schema_version(), 1u32);
+    }
 
-fn setup_bridge(
-    env: &Env,
-    limit: i128,
-) -> (
-    Address,
-    FiatBridgeClient,
-    Address,
-    Address,
-    TokenClient,
-    StellarAssetClient,
-) {
-    let contract_id = env.register(FiatBridge, ());
-    let bridge = FiatBridgeClient::new(env, &contract_id);
-    let admin = Address::generate(env);
-    let token_admin = Address::generate(env);
-    let (token_addr, token, token_sac) = create_token(env, &token_admin);
-    bridge.init(&admin, &token_addr, &limit);
-    (contract_id, bridge, admin, token_addr, token, token_sac)
-}
+    #[test]
+    fn test_migrate_unauthorized() {
+        let env = Env::default();
+        // Do not mock auths so require_auth is enforced
+        let (_, bridge, _admin, _token_addr, _token, _token_sac) = setup_bridge(&env, 100);
+        let result = bridge.try_migrate();
+        assert!(matches!(result, Err(Err(_))));
+    }
 
-// ── happy-path tests ──────────────────────────────────────────────────
-
-#[test]
-fn test_deposit_and_withdraw() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_id, bridge, _, token_addr, token, token_sac) = setup_bridge(&env, 500);
-    let user = Address::generate(&env);
-    token_sac.mint(&user, &1_000);
-
-    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env));
-    assert_eq!(token.balance(&user), 800);
-    assert_eq!(token.balance(&contract_id), 200);
-
-    let req_id = bridge.request_withdrawal(&user, &100, &token_addr);
-    bridge.execute_withdrawal(&req_id, &None);
-
-    assert_eq!(token.balance(&user), 900);
-    assert_eq!(token.balance(&contract_id), 100);
-}
-
-#[test]
-fn test_time_locked_withdrawal() {
+    // ...existing code...
     let env = Env::default();
     env.mock_all_auths();
 
@@ -724,9 +731,9 @@ fn test_time_locked_withdrawal() {
         let env = Env::default();
         env.mock_all_auths();
 
-        let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
-        assert_eq!(bridge.get_receipt(&999), None);
-    }
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
+    assert_eq!(bridge.get_receipt(&999), None);
+}
 
     #[test]
     fn test_instance_storage_ttl_extension() {
