@@ -12,10 +12,11 @@ import { useStellarWallet } from '@/contexts/StellarWalletContext';
 import {
   BRIDGE_LIMIT_WARNING_PERCENT,
   depositToContract,
-  getBridgeLimit,
   withdrawFromContract,
   stroopsToDisplay,
+  clearCache,
 } from '@/lib/stellarContract';
+import useBridgeStats from '@/hooks/useBridgeStats';
 import {
   getTokenPrice,
   formatFiatAmount,
@@ -83,9 +84,13 @@ export default function StellarFiatModal({
   const [txHash, setTxHash] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoadingUI, setIsLoadingUI] = useState(true);
-  const [bridgeLimit, setBridgeLimit] = useState<bigint | null>(null);
-  const [bridgeLimitError, setBridgeLimitError] = useState('');
-  const [isLoadingBridgeLimit, setIsLoadingBridgeLimit] = useState(false);
+  const {
+    limit: bridgeLimit,
+    loading: isLoadingBridgeLimit,
+    error: bridgeLimitError,
+    refetchStats,
+    refresh,
+  } = useBridgeStats();
 
   useEffect(() => {
     if (isOpen) {
@@ -105,38 +110,12 @@ export default function StellarFiatModal({
     setTxHash('');
     setErrorMsg('');
 
-    if (isAdminMode) {
-      setBridgeLimit(null);
-      setBridgeLimitError('');
-      setIsLoadingBridgeLimit(false);
-      return;
-    }
-
+    if (isAdminMode) return;
     let cancelled = false;
-
-    setBridgeLimit(null);
-    setBridgeLimitError('');
-    setIsLoadingBridgeLimit(true);
-
-    getBridgeLimit()
-      .then((limit) => {
-        if (!cancelled) {
-          setBridgeLimit(limit);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setBridgeLimitError(
-            'Unable to load the current on-chain bridge limit. Deposits are temporarily disabled.',
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingBridgeLimit(false);
-        }
-      });
-
+    void (async () => {
+      if (cancelled) return;
+      await refetchStats();
+    })();
     return () => {
       cancelled = true;
     };
@@ -241,6 +220,12 @@ export default function StellarFiatModal({
       }
       setTxHash(hash);
       setStatus('success');
+      // After a successful write, refetch stats so UI shows updated values
+      try {
+        await refetchStats();
+      } catch {
+        // ignore
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Transaction failed');
       setStatus('error');
@@ -369,13 +354,26 @@ export default function StellarFiatModal({
               <div className="mb-4 rounded-xl border border-gray-700 bg-gray-800/60 px-4 py-3">
                 <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
                   <span>On-chain per-deposit limit</span>
-                  <span>
-                    {isLoadingBridgeLimit
-                      ? 'Loading...'
-                      : bridgeLimit !== null
-                        ? `${stroopsToDisplay(bridgeLimit)} XLM`
-                        : 'Unavailable'}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span>
+                      {isLoadingBridgeLimit
+                        ? 'Loading...'
+                        : bridgeLimit !== null
+                          ? `${stroopsToDisplay(bridgeLimit)} XLM`
+                          : 'Unavailable'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        clearCache();
+                        await refresh();
+                        console.log('manual refresh');
+                      }}
+                      className="text-xs text-blue-400 hover:underline"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-between text-sm text-gray-200 mb-2">
