@@ -17,9 +17,9 @@ import {
   BRIDGE_LIMIT_WARNING_PERCENT,
   depositToContract,
   withdrawFromContract,
-  stroopsToDisplay,
   clearCache,
 } from '@/lib/stellarContract';
+import { xlmToStroops, stroopsToXlm as stroopsToDisplay } from '@/lib/stroops';
 import type { FeeEstimate } from '@/lib/stellarContract';
 import useBridgeStats from '@/hooks/useBridgeStats';
 import { getTokenPrice, formatFiatAmount } from '@/lib/cryptoPriceService';
@@ -51,28 +51,6 @@ interface PendingTxRecord {
   amount: string;
   isAdminMode: boolean;
   recipient: string;
-}
-
-function parseAmountToStroops(value: string): bigint | null {
-  const normalized = value.trim();
-
-  if (!normalized) {
-    return null;
-  }
-
-  if (!/^\d*(?:\.\d{0,7})?$/.test(normalized)) {
-    return null;
-  }
-
-  const [wholePart = '0', fractionalPart = ''] = normalized.split('.');
-
-  if (!wholePart && !fractionalPart) {
-    return null;
-  }
-
-  const whole = wholePart || '0';
-  const fraction = (fractionalPart || '').padEnd(7, '0');
-  return BigInt(whole) * 10_000_000n + BigInt(fraction || '0');
 }
 
 export default function StellarFiatModal({
@@ -220,7 +198,7 @@ export default function StellarFiatModal({
       return;
     }
 
-    const currentStroops = parseAmountToStroops(amount);
+    const currentStroops = xlmToStroops(amount);
     if (!currentStroops || currentStroops <= BigInt(0)) {
       setFeeEstimate(null);
       return;
@@ -283,7 +261,7 @@ export default function StellarFiatModal({
     void updateFiatEstimate();
   }, [updateFiatEstimate]);
 
-  const stroopsAmount = parseAmountToStroops(amount);
+  const stroopsAmount = xlmToStroops(amount);
   const numericAmount = Number.parseFloat(amount);
   const hasValidAmount = stroopsAmount !== null && stroopsAmount > BigInt(0);
   const isRiskyAmount =
