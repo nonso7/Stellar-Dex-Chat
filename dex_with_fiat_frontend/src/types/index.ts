@@ -4,6 +4,21 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   timestamp: Date;
+  error?: {
+    message: string;
+    timestamp: Date;
+    retryAttempts: number;
+  };
+  originalPayload?: {
+    content: string;
+    conversationContext?: {
+      isWalletConnected: boolean;
+      walletAddress?: string;
+      previousMessages?: Array<{ role: string; content: string }>;
+      messageCount?: number;
+      hasTransactionData?: boolean;
+    };
+  };
   metadata?: {
     transactionData?: TransactionData;
     suggestedActions?: SuggestedAction[];
