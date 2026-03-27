@@ -16,7 +16,7 @@ interface TranslationContextType {
   setLocale: (locale: string) => void;
 }
 
-const translations: Record<string, any> = { en };
+const translations: Record<string, TranslationKeys> = { en };
 
 const TranslationContext = createContext<TranslationContextType | undefined>(undefined);
 
@@ -28,15 +28,15 @@ export function TranslationProvider({ children }: { children: React.ReactNode })
     let value = translations[locale];
     
     for (const k of keys) {
-      value = value?.[k];
+      value = (value as Record<string, unknown>)?.[k];
     }
 
     if (typeof value !== 'string') return key;
 
     if (params) {
       return Object.entries(params).reduce(
-        (acc, [k, v]) => acc.replace(`{${k}}`, String(v)),
-        value
+        (acc: string, [k, v]) => acc.replace(`{${k}}`, String(v)),
+        value as string
       );
     }
 

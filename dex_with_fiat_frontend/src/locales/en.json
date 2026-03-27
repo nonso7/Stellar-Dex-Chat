@@ -19,7 +19,11 @@
     "network_mismatch_warning": "Deposits and withdrawals are disabled. Switch to {expectedNetwork} in Freighter: Settings → Network → {expectedNetwork}.",
     "loading_stats": "Loading stats…",
     "bridge_balance": "Bridge Balance",
-    "deposit_limit": "Deposit Limit"
+    "deposit_limit": "Deposit Limit",
+    "deposit_desc": "Add funds to your Stellar account",
+    "rates_desc": "Check current market conversion rates",
+    "portfolio_desc": "View your asset balance and value",
+    "help_desc": "Get assistance with platform features"
   },
   "chat": {
     "placeholder": "Ask about XLM rates, deposit, or anything Stellar...",

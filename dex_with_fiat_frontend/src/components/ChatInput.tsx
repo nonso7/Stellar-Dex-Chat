@@ -34,10 +34,10 @@ export default function ChatInput({
   const [paletteIndex, setPaletteIndex] = useState(0);
 
   const commands = [
-    { cmd: '/deposit', desc: t('common.deposit_desc' as any) || 'Add funds to your Stellar account' },
-    { cmd: '/rates', desc: t('common.rates_desc' as any) || 'Check current market conversion rates' },
-    { cmd: '/portfolio', desc: t('common.portfolio_desc' as any) || 'View your asset balance and value' },
-    { cmd: '/help', desc: t('common.help_desc' as any) || 'Get assistance with platform features' },
+    { cmd: '/deposit', desc: t('common.deposit_desc') || 'Add funds to your Stellar account' },
+    { cmd: '/rates', desc: t('common.rates_desc') || 'Check current market conversion rates' },
+    { cmd: '/portfolio', desc: t('common.portfolio_desc') || 'View your asset balance and value' },
+    { cmd: '/help', desc: t('common.help_desc') || 'Get assistance with platform features' },
   ];
 
   const handleInputChange = (val: string) => {
