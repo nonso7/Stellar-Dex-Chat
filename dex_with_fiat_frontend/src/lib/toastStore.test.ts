@@ -52,8 +52,14 @@ describe('ToastStore', () => {
       generateId: () => `toast-${++nextId}`,
     });
 
-    const autoId = store.addToast({ message: 'Auto dismiss me', severity: 'success' });
-    const manualId = store.addToast({ message: 'Dismiss me manually', severity: 'warning' });
+    const autoId = store.addToast({
+      message: 'Auto dismiss me',
+      severity: 'success',
+    });
+    const manualId = store.addToast({
+      message: 'Dismiss me manually',
+      severity: 'warning',
+    });
     expect(autoId).toBe('toast-1');
     expect(manualId).toBe('toast-2');
     expect(store.getSnapshot()).toHaveLength(2);

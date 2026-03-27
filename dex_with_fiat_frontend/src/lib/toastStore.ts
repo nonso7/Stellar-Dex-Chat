@@ -19,7 +19,10 @@ export interface ToastStoreOptions {
   maxToasts?: number;
   now?: () => number;
   generateId?: () => string;
-  setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  setTimer?: (
+    callback: () => void,
+    delayMs: number,
+  ) => ReturnType<typeof setTimeout>;
   clearTimer?: (timerId: ReturnType<typeof setTimeout>) => void;
 }
 
@@ -106,7 +109,10 @@ export class ToastStore {
     const now = this.now();
     const dedupeKey = this.getDedupeKey(normalizedMessage, severity);
     const lastToastAt = this.lastToastAtByKey.get(dedupeKey);
-    if (typeof lastToastAt === 'number' && now - lastToastAt < this.dedupeWindowMs) {
+    if (
+      typeof lastToastAt === 'number' &&
+      now - lastToastAt < this.dedupeWindowMs
+    ) {
       return null;
     }
 

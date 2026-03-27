@@ -75,7 +75,9 @@ export function ToastProvider({ children }: ToastProviderProps) {
               <ToastIcon severity={toast.severity} />
             </div>
 
-            <p className="flex-1 text-sm font-medium leading-5">{toast.message}</p>
+            <p className="flex-1 text-sm font-medium leading-5">
+              {toast.message}
+            </p>
 
             <button
               type="button"
