@@ -578,3 +578,33 @@ fn test_cancel_renounce_admin() {
     let res = bridge.try_execute_renounce_admin();
     assert_eq!(res, Err(Ok(Error::ActionNotQueued)));
 }
+
+#[test]
+fn test_operator_heartbeat() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1000);
+
+    let operator = Address::generate(&env);
+
+    // Initial state
+    assert!(!bridge.is_operator(&operator));
+    assert_eq!(bridge.get_operator_heartbeat(&operator), None);
+
+    // Set operator
+    bridge.set_operator(&operator, &true);
+    assert!(bridge.is_operator(&operator));
+
+    // Heartbeat
+    let curr = env.ledger().sequence();
+    bridge.heartbeat(&operator);
+    assert_eq!(bridge.get_operator_heartbeat(&operator), Some(curr));
+
+    // Deactivate operator
+    bridge.set_operator(&operator, &false);
+    assert!(!bridge.is_operator(&operator));
+
+    // Heartbeat should fail now
+    let res = bridge.try_heartbeat(&operator);
+    assert_eq!(res, Err(Ok(Error::NotOperator)));
+}
