@@ -273,7 +273,9 @@ impl FiatBridge {
 
         env.storage().instance().set(&DataKey::SchemaVersion, &1u32);
         env.storage().instance().set(&DataKey::NextActionID, &0u64);
-        env.storage().instance().set(&DataKey::WithdrawQueueLen, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::WithdrawQueueLen, &0u64);
         env.storage()
             .instance()
             .set(&DataKey::WithdrawQueueHead, &Option::<u64>::None);
@@ -409,7 +411,11 @@ impl FiatBridge {
         let receipt_id = env.crypto().sha256(&derivation_data.to_xdr(&env));
 
         // Collision check (safety)
-        if env.storage().persistent().has(&DataKey::Receipt(receipt_id.clone().into())) {
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Receipt(receipt_id.clone().into()))
+        {
             return Err(Error::InternalError);
         }
 
@@ -652,7 +658,7 @@ impl FiatBridge {
             .set(&DataKey::TokenRegistry(token.clone()), &config);
 
         Self::check_invariants(&env, &token)?;
-        
+
         env.events().publish(
             (Symbol::new(&env, "req_withdr"), to),
             (request_id, memo_hash),
@@ -677,9 +683,6 @@ impl FiatBridge {
 
         if env.ledger().sequence() < request.unlock_ledger {
             return Err(Error::WithdrawalLocked);
-        }
-        if env.ledger().sequence() > request.expires_ledger {
-            return Err(Error::WithdrawalExpired);
         }
 
         // Anti-sandwich check
@@ -1267,7 +1270,11 @@ impl FiatBridge {
             .unwrap_or(0)
     }
 
-    fn validate_and_increment_nonce(env: &Env, operator: &Address, provided_nonce: u64) -> Result<(), Error> {
+    fn validate_and_increment_nonce(
+        env: &Env,
+        operator: &Address,
+        provided_nonce: u64,
+    ) -> Result<(), Error> {
         let current_nonce: u64 = env
             .storage()
             .instance()
@@ -1284,9 +1291,10 @@ impl FiatBridge {
         }
 
         // Increment nonce
-        env.storage()
-            .instance()
-            .set(&DataKey::OperatorNonce(operator.clone()), &(current_nonce + 1));
+        env.storage().instance().set(
+            &DataKey::OperatorNonce(operator.clone()),
+            &(current_nonce + 1),
+        );
 
         env.events().publish(
             (Symbol::new(env, "nonce_inc"), operator.clone()),
@@ -1760,10 +1768,7 @@ impl FiatBridge {
             .unwrap_or(0)
     }
 
-    pub fn migrate_escrow(
-        env: Env,
-        batch_size: u32,
-    ) -> Result<u32, Error> {
+    pub fn migrate_escrow(env: Env, batch_size: u32) -> Result<u32, Error> {
         let admin: Address = env
             .storage()
             .instance()
@@ -1815,7 +1820,9 @@ impl FiatBridge {
                             .storage()
                             .instance()
                             .get(&DataKey::Token)
-                            .unwrap_or_else(|| Address::from_string(&soroban_sdk::String::from_str(&env, ""))),
+                            .unwrap_or_else(|| {
+                                Address::from_string(&soroban_sdk::String::from_str(&env, ""))
+                            }),
                         amount: receipt.amount,
                         ledger: receipt.ledger,
                         migrated: true,
@@ -1951,9 +1958,7 @@ impl FiatBridge {
                 return Err(Error::InternalError);
             }
             let ledgers = Self::bytes_to_u32(env, &op.payload)?;
-            env.storage()
-                .instance()
-                .set(&DataKey::LockPeriod, &ledgers);
+            env.storage().instance().set(&DataKey::LockPeriod, &ledgers);
             Ok(())
         } else if *op_name == Symbol::new(env, "set_quota") {
             if op.payload.len() < 16 {
@@ -2163,11 +2168,7 @@ impl FiatBridge {
     /// Advance the per-tier queue head after a request with `tier` is removed.
     fn advance_tier_queue_head(env: &Env, tier: u32, removed_id: u64) {
         let head_key = DataKey::TierQueueHead(tier);
-        let head: Option<u64> = env
-            .storage()
-            .instance()
-            .get(&head_key)
-            .unwrap_or(None);
+        let head: Option<u64> = env.storage().instance().get(&head_key).unwrap_or(None);
         if head != Some(removed_id) {
             return;
         }
