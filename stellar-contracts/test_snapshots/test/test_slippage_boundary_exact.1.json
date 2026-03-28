@@ -2924,10 +2924,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "slippage"
+                "u32": 1
               },
               {
-                "symbol": "v1"
+                "symbol": "slippage"
               }
             ],
             "data": {
@@ -2976,6 +2976,9 @@
           "v0": {
             "topics": [
               {
+                "u32": 1
+              },
+              {
                 "symbol": "deposit"
               },
               {
@@ -2998,6 +3001,9 @@
         "body": {
           "v0": {
             "topics": [
+              {
+                "u32": 1
+              },
               {
                 "symbol": "rcpt_issd"
               },

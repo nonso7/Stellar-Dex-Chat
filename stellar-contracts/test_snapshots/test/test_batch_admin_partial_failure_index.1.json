@@ -430,10 +430,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "batch_fail"
+                "u32": 1
               },
               {
-                "symbol": "v1"
+                "symbol": "batch_fail"
               }
             ],
             "data": {

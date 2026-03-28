@@ -609,10 +609,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "slippage"
+                "u32": 1
               },
               {
-                "symbol": "v1"
+                "symbol": "slippage"
               }
             ],
             "data": {
