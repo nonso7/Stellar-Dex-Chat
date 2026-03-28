@@ -113,5 +113,30 @@ npm install
 npm run dev
 ```
 
+### 4. Git Pre-commit Hooks (Husky + lint-staged)
+
+This repository uses Husky and lint-staged to run quick quality checks before each commit.
+
+```bash
+# from repository root
+npm install
+npm run prepare
+
+# required once for Rust linting
+rustup component add clippy
+```
+
+What runs on pre-commit:
+
+- Staged Rust files in `stellar-contracts/**/*.rs`: `cargo clippy --all-targets --all-features -- -D warnings`
+- Staged TypeScript files in `dex_with_fiat_frontend/**/*.{ts,tsx}`: `eslint --max-warnings=0` on staged files only
+
+You can also run the same checks manually:
+
+```bash
+npm run precommit:clippy
+npm run precommit:eslint
+```
+
 ## Contributing
 Contributions and feature reviews are welcome. Please open up an issue to raise bugs or feature requests!
