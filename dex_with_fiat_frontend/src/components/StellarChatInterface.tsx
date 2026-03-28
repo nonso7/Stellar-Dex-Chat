@@ -546,10 +546,10 @@ export default function StellarChatInterface() {
           <div
             className={`flex-shrink-0 flex flex-col items-center gap-1 py-1.5 text-xs ${
               isNetworkMismatch
-                ? 'bg-red-500/10 text-red-400'
+                ? isDarkMode ? 'bg-red-900/40 text-red-400' : 'bg-red-100 text-red-700'
                 : isDarkMode
                   ? 'bg-gray-800/50 text-gray-400'
-                  : 'bg-gray-50 text-gray-500'
+                  : 'bg-gray-50 text-gray-700'
             }`}
             role="status"
             aria-live="polite"
@@ -563,7 +563,7 @@ export default function StellarChatInterface() {
               {t('common.network')}:{' '}
               <span
                 className={`font-medium ${
-                  isNetworkMismatch ? 'text-red-400' : 'text-blue-400'
+                  isNetworkMismatch ? (isDarkMode ? 'text-red-400' : 'text-red-700') : (isDarkMode ? 'text-blue-400' : 'text-blue-700')
                 }`}
               >
                 {connection.network || t('common.unknown')}
@@ -617,7 +617,7 @@ export default function StellarChatInterface() {
             className={`flex-shrink-0 py-2 px-4 text-xs ${
               isDarkMode
                 ? 'bg-gray-800/30 text-gray-300'
-                : 'bg-gray-100 text-gray-600'
+                : 'bg-gray-100 text-gray-700'
             }`}
             role="status"
             aria-live="polite"
@@ -630,19 +630,19 @@ export default function StellarChatInterface() {
               <div className="flex flex-col gap-1 sm:flex-row sm:gap-4 sm:items-center">
                 <span className="font-medium">
                   {t('common.bridge_balance')}:{' '}
-                  <span className="text-blue-400">
+                  <span className={isDarkMode ? 'text-blue-400' : 'text-blue-700'}>
                     {balance !== null ? stroopsToDisplay(balance) : '—'} XLM
                   </span>
                 </span>
                 <span className="font-medium">
                   {t('common.deposit_limit')}:{' '}
-                  <span className="text-blue-400">
+                  <span className={isDarkMode ? 'text-blue-400' : 'text-blue-700'}>
                     {limit !== null ? stroopsToDisplay(limit) : '—'} XLM
                   </span>
                 </span>
                 <span className="font-medium">
                   Total Deposited:{' '}
-                  <span className="text-blue-400">
+                  <span className={isDarkMode ? 'text-blue-400' : 'text-blue-700'}>
                     {totalDeposited !== null
                       ? stroopsToDisplay(totalDeposited)
                       : '—'}{' '}
