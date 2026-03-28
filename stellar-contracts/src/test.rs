@@ -614,7 +614,7 @@ fn test_slippage_violation_reverts() {
         &max_slippage,
         &None,
     );
-    assert_eq!(result, Err(Ok(Error::SlippageExceeded)));
+    assert_eq!(result, Err(Ok(Error::SlippageTooHigh)));
 
     // Now allow it with 600 bps threshold
     bridge.deposit(
@@ -627,6 +627,119 @@ fn test_slippage_violation_reverts() {
         &None,
     );
     assert_eq!(token.balance(&user), 4000);
+}
+
+// ── slippage boundary tests ───────────────────────────────────────────────
+#[test]
+fn test_slippage_boundary_exact() {
+    // Test that deposits pass at exactly max_slippage bps
+    // Sweep max_slippage from 0 to 10_000 bps
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+    let oracle_id = env.register(MockOracle, ());
+    bridge.set_oracle(&oracle_id);
+
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &100_000);
+
+    // Test various slippage boundaries
+    let test_cases = [
+        0u32, 1, 10, 50, 100, 250, 500, 1000, 2500, 5000, 7500, 10000,
+    ];
+
+    for max_slippage_bps in test_cases.iter() {
+        // Calculate expected_price such that actual slippage equals max_slippage_bps
+        // MockOracle returns 9_500_000 (0.95 USD)
+        // We want: (expected - 9_500_000) / expected * 10_000 = max_slippage_bps
+        // Solving: expected = 9_500_000 * 10_000 / (10_000 - max_slippage_bps)
+        
+        let actual_price = 9_500_000i128;
+        let expected_price = if *max_slippage_bps == 10000 {
+            // Special case: 100% slippage means expected can be anything > actual
+            actual_price * 2
+        } else {
+            // Calculate expected price that gives exactly max_slippage_bps
+            actual_price * 10_000 / (10_000 - *max_slippage_bps as i128)
+        };
+
+        // Deposit should succeed at exactly max_slippage
+        let result = bridge.try_deposit(
+            &user,
+            &1000,
+            &token_addr,
+            &Bytes::new(&env),
+            &expected_price,
+            max_slippage_bps,
+            &None,
+        );
+
+        // Should succeed (not return an error)
+        assert!(
+            result.is_ok(),
+            "Deposit should succeed at exactly {} bps slippage, but got error: {:?}",
+            max_slippage_bps,
+            result
+        );
+    }
+}
+
+#[test]
+fn test_slippage_boundary_exceeded() {
+    // Test that deposits fail at max_slippage + 1 bps
+    // Sweep max_slippage from 0 to 10_000 bps
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 100_000);
+    let oracle_id = env.register(MockOracle, ());
+    bridge.set_oracle(&oracle_id);
+
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &100_000);
+
+    // Test various slippage boundaries
+    let test_cases = [
+        0u32, 1, 10, 50, 100, 250, 500, 1000, 2500, 5000, 7500, 9999,
+    ];
+
+    for max_slippage_bps in test_cases.iter() {
+        // Calculate expected_price such that actual slippage equals max_slippage_bps + 1
+        // MockOracle returns 9_500_000 (0.95 USD)
+        // We want: (expected - 9_500_000) / expected * 10_000 = max_slippage_bps + 1
+        // Solving: expected = 9_500_000 * 10_000 / (10_000 - (max_slippage_bps + 1))
+        
+        let actual_price = 9_500_000i128;
+        let target_slippage = *max_slippage_bps + 1;
+        
+        if target_slippage >= 10000 {
+            // Skip if target slippage would be >= 100%
+            continue;
+        }
+
+        let expected_price = actual_price * 10_000 / (10_000 - target_slippage as i128);
+
+        // Deposit should fail at max_slippage + 1
+        let result = bridge.try_deposit(
+            &user,
+            &1000,
+            &token_addr,
+            &Bytes::new(&env),
+            &expected_price,
+            max_slippage_bps,
+            &None,
+        );
+
+        // Should fail with SlippageTooHigh error
+        assert_eq!(
+            result,
+            Err(Ok(Error::SlippageTooHigh)),
+            "Deposit should fail at {} bps slippage (max_slippage={} bps)",
+            target_slippage,
+            max_slippage_bps
+        );
+    }
 }
 
 // ── event versioning tests ────────────────────────────────────────────────

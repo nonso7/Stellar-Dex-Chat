@@ -65,6 +65,7 @@ pub enum Error {
     OracleNotSet = 701,
     OraclePriceInvalid = 702,
     SlippageExceeded = 703,
+    SlippageTooHigh = 704,
 
     // --- 800 series: Quota & Migration ---
     WithdrawalQuotaExceeded = 801,
@@ -1050,7 +1051,7 @@ impl FiatBridge {
         );
 
         if slippage_bps > max_slippage_bps as i128 {
-            return Err(Error::SlippageExceeded);
+            return Err(Error::SlippageTooHigh);
         }
 
         Ok(())
