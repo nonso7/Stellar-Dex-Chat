@@ -1,4 +1,6 @@
 #![no_std]
+#![allow(deprecated)]
+#![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, xdr::ToXdr, Address, Bytes, BytesN,
     Env, Symbol, Vec,
@@ -12,7 +14,6 @@ pub const MIN_TTL: u32 = 518_400; // ~30 days
 pub const MAX_TTL: u32 = 535_680; // ~31 days
 const MAX_REFERENCE_LEN: u32 = 64;
 const WINDOW_LEDGERS: u32 = 17_280; // ~24 hours
-const WITHDRAWAL_EXPIRY_WINDOW_LEDGERS: u32 = 17_280; // ~24 hours
 const MIN_TIMELOCK_DELAY: u32 = 34_560; // 48 hours
 const DEFAULT_INACTIVITY_THRESHOLD: u32 = 1_555_200; // ~3 months
 pub const EVENT_VERSION: u32 = 1;
@@ -407,7 +408,7 @@ impl FiatBridge {
 
         // Transfer
         let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&from, &env.current_contract_address(), &amount);
+        token_client.transfer(&from, env.current_contract_address(), &amount);
 
         // State update
         let receipt_counter: u64 = env
@@ -2097,7 +2098,7 @@ impl FiatBridge {
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
-        let total_ops = operations.len() as u32;
+        let total_ops = operations.len();
         let mut success_count: u32 = 0;
 
         let snapshot_cooldown: u32 = env
@@ -2208,8 +2209,8 @@ impl FiatBridge {
             return Err(Error::InternalError);
         }
         let mut arr = [0u8; 4];
-        for i in 0..4 {
-            arr[i] = bytes.get(i as u32).ok_or(Error::InternalError)?;
+        for (i, slot) in arr.iter_mut().enumerate() {
+            *slot = bytes.get(i as u32).ok_or(Error::InternalError)?;
         }
         Ok(u32::from_be_bytes(arr))
     }
@@ -2219,8 +2220,8 @@ impl FiatBridge {
             return Err(Error::InternalError);
         }
         let mut arr = [0u8; 16];
-        for i in 0..16 {
-            arr[i] = bytes.get(i as u32).ok_or(Error::InternalError)?;
+        for (i, slot) in arr.iter_mut().enumerate() {
+            *slot = bytes.get(i as u32).ok_or(Error::InternalError)?;
         }
         Ok(i128::from_be_bytes(arr))
     }

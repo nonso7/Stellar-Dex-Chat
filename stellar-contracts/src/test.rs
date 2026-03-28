@@ -475,7 +475,7 @@ fn test_get_config_snapshot() {
     assert_eq!(config.lock_period, bridge.get_lock_period());
     assert_eq!(config.cooldown_ledgers, bridge.get_cooldown());
     assert_eq!(config.inactivity_threshold, DEFAULT_INACTIVITY_THRESHOLD);
-    assert_eq!(config.allowlist_enabled, false);
+    assert!(!config.allowlist_enabled);
     assert_eq!(config.emergency_recovery, None);
     assert_eq!(config.anti_sandwich_delay, bridge.get_anti_sandwich_delay());
 }
@@ -2468,11 +2468,11 @@ mod proptest_deposit {
     use super::*;
     use proptest::prelude::*;
 
-    /// Deposit invariants that must hold for every positive amount ≤ limit:
-    ///   1. deposit() succeeds
-    ///   2. contract balance increases by exactly `amount`
-    ///   3. user balance decreases by exactly `amount`
-    ///   4. get_user_deposited() returns `amount`
+    // Deposit invariants that must hold for every positive amount <= limit:
+    // 1. deposit() succeeds
+    // 2. contract balance increases by exactly amount
+    // 3. user balance decreases by exactly amount
+    // 4. get_user_deposited() returns amount
     proptest! {
         #[test]
         fn deposit_invariants_hold_for_all_valid_amounts(amount in 1i128..=500i128) {
