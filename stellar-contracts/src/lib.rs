@@ -2275,7 +2275,7 @@ impl FiatBridge {
                 EVENT_VERSION,
             ),
             (EVENT_VERSION, Symbol::new(&env, "batch_ok")),
-            // (success_count, failure_count, total_ops),
+            (success_count, failure_count, total_ops),
         );
 
         Ok(batch_result)
