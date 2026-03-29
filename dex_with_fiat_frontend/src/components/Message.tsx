@@ -40,7 +40,7 @@ export default function Message({ message, onActionClick, onRetry, shouldAnimate
   const { t } = useTranslation();
   const isPending = message.metadata?.status === 'pending';
   const isFailed = message.metadata?.status === 'failed';
-  const [receiptCopied, setReceiptCopied] = useState(false);
+
 
   // Currency conversion hook for transaction amounts
   const amountForConversion = message.metadata?.transactionData?.amountIn 
@@ -52,14 +52,7 @@ export default function Message({ message, onActionClick, onRetry, shouldAnimate
     tokenForConversion,
   );
 
-  const handleCopyReceiptId = useCallback((receiptId: string) => {
-    navigator.clipboard?.writeText(receiptId).then(() => {
-      setReceiptCopied(true);
-      setTimeout(() => setReceiptCopied(false), 2000);
-    }).catch(() => {
-      /* clipboard unavailable */
-    });
-  }, []);
+
 
   const variants = {
     initial: { 

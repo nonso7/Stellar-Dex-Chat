@@ -53,7 +53,6 @@ import {
   processQueue,
 } from '@/lib/networkQueue';
 import CopyButton from '@/components/ui/CopyButton';
-import { subscribeToQueue, processQueue } from '@/lib/networkQueue';
 
 export default function StellarChatInterface() {
   const { t } = useTranslation();
