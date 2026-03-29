@@ -1244,10 +1244,14 @@ impl FiatBridge {
 
         let curr = env.ledger().sequence();
         let key = DataKey::UserDailyDeposit(depositor.clone(), token.clone());
-        let mut record: UserDailyDeposit = env.storage().instance().get(&key).unwrap_or(UserDailyDeposit {
-            amount: 0,
-            window_start: curr,
-        });
+        let mut record: UserDailyDeposit =
+            env.storage()
+                .instance()
+                .get(&key)
+                .unwrap_or(UserDailyDeposit {
+                    amount: 0,
+                    window_start: curr,
+                });
 
         if curr >= record.window_start.saturating_add(WINDOW_LEDGERS) {
             record.amount = 0;
@@ -1966,11 +1970,7 @@ impl FiatBridge {
                 .get::<_, BytesN<32>>(&DataKey::ReceiptIndex(idx))
             {
                 let receipt_key = DataKey::Receipt(receipt_hash.clone());
-                if let Some(receipt) = env
-                    .storage()
-                    .persistent()
-                    .get::<_, Receipt>(&receipt_key)
-                {
+                if let Some(receipt) = env.storage().persistent().get::<_, Receipt>(&receipt_key) {
                     if receipt.depositor == *depositor {
                         env.storage()
                             .persistent()
@@ -2128,10 +2128,8 @@ impl FiatBridge {
         };
 
         env.events().publish(
-            (Symbol::new(&env, "batch_ok"), Symbol::new(&env, "v1")),
-            (success_count, failure_count, total_ops),
             (EVENT_VERSION, Symbol::new(&env, "batch_ok")),
-            (success_count, total_ops),
+            (success_count, failure_count, total_ops),
         );
 
         Ok(batch_result)
