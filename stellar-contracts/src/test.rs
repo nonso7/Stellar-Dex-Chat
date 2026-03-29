@@ -475,7 +475,7 @@ fn test_get_config_snapshot() {
     assert_eq!(config.lock_period, bridge.get_lock_period());
     assert_eq!(config.cooldown_ledgers, bridge.get_cooldown());
     assert_eq!(config.inactivity_threshold, DEFAULT_INACTIVITY_THRESHOLD);
-    assert_eq!(config.allowlist_enabled, false);
+    assert!(!config.allowlist_enabled);
     assert_eq!(config.emergency_recovery, None);
     assert_eq!(config.anti_sandwich_delay, bridge.get_anti_sandwich_delay());
 }
@@ -717,18 +717,30 @@ fn test_slippage_boundary_exact() {
     ];
 
     for max_slippage_bps in test_cases.iter() {
+        // Calculate expected_price such that actual slippage is at most max_slippage_bps.
+        // MockOracle returns 9_500_000 (0.95 USD).
+        // Slippage formula (ceiling): ceil((expected - actual) * 10_000 / expected)
+        // We derive: expected = actual * 10_000 / (10_000 - max_slippage_bps)
+        // BUT we must use ceiling division here so the resulting ceil-computed
+        // slippage does not exceed max_slippage_bps.
+        
         // Calculate expected_price such that actual slippage equals max_slippage_bps
         // MockOracle returns 9_500_000 (0.95 USD)
         // We want: (expected - 9_500_000) / expected * 10_000 = max_slippage_bps
         // Solving: expected = 9_500_000 * 10_000 / (10_000 - max_slippage_bps)
-        
+
         let actual_price = 9_500_000i128;
         let expected_price = if *max_slippage_bps == 10000 {
             // Special case: 100% slippage means expected can be anything > actual
             actual_price * 2
+        } else if *max_slippage_bps == 0 {
+            // No slippage allowed — expected must equal actual
+            actual_price
         } else {
-            // Calculate expected price that gives exactly max_slippage_bps
-            actual_price * 10_000 / (10_000 - *max_slippage_bps as i128)
+            // Use ceiling division to ensure slippage_bps ≤ max_slippage_bps
+            let numerator = actual_price * 10_000;
+            let denominator = 10_000 - *max_slippage_bps as i128;
+            (numerator + denominator - 1) / denominator
         };
 
         // Deposit should succeed at exactly max_slippage
@@ -767,19 +779,17 @@ fn test_slippage_boundary_exceeded() {
     token_sac.mint(&user, &100_000);
 
     // Test various slippage boundaries
-    let test_cases = [
-        0u32, 1, 10, 50, 100, 250, 500, 1000, 2500, 5000, 7500, 9999,
-    ];
+    let test_cases = [0u32, 1, 10, 50, 100, 250, 500, 1000, 2500, 5000, 7500, 9999];
 
     for max_slippage_bps in test_cases.iter() {
         // Calculate expected_price such that actual slippage equals max_slippage_bps + 1
         // MockOracle returns 9_500_000 (0.95 USD)
         // We want: (expected - 9_500_000) / expected * 10_000 = max_slippage_bps + 1
         // Solving: expected = 9_500_000 * 10_000 / (10_000 - (max_slippage_bps + 1))
-        
+
         let actual_price = 9_500_000i128;
         let target_slippage = *max_slippage_bps + 1;
-        
+
         if target_slippage >= 10000 {
             // Skip if target slippage would be >= 100%
             continue;
@@ -951,10 +961,11 @@ fn test_request_withdrawal_extends_matching_receipt_ttl() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &2_000);
 
-    let receipt_id =
-        bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    let receipt_id = bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
     let receipt_key = DataKey::Receipt(receipt_id.clone());
-    let initial_ttl = env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&receipt_key));
+    let initial_ttl = env.as_contract(&contract_id, || {
+        env.storage().persistent().get_ttl(&receipt_key)
+    });
 
     env.ledger().with_mut(|li| {
         li.sequence_number += initial_ttl.saturating_sub(5);
@@ -965,7 +976,10 @@ fn test_request_withdrawal_extends_matching_receipt_ttl() {
     bridge.request_withdrawal(&user, &100, &token_addr, &None, &0);
 
     assert!(
-        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&receipt_key))
+        env.as_contract(&contract_id, || env
+            .storage()
+            .persistent()
+            .get_ttl(&receipt_key))
             >= MIN_TTL + 100 + 20
     );
 }
@@ -1009,6 +1023,63 @@ fn test_withdrawal_quota_per_user() {
 
     let result_b = bridge.try_withdraw(&user_b, &100, &token_addr);
     assert_eq!(result_b, Err(Ok(Error::WithdrawalQuotaExceeded)));
+}
+
+#[test]
+fn test_withdrawal_quota_window_reset_isolated_per_user() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_sac.mint(&user_a, &5_000);
+    token_sac.mint(&user_b, &5_000);
+
+    bridge.deposit(&user_a, &2_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.deposit(&user_b, &2_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.set_withdrawal_quota(&500);
+
+    let start_ledger = env.ledger().sequence();
+
+    // User A consumes full quota at start_ledger.
+    bridge.withdraw(&user_a, &500, &token_addr);
+
+    // User B consumes full quota in a later window start.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start_ledger + 100;
+    });
+    bridge.withdraw(&user_b, &500, &token_addr);
+
+    assert_eq!(
+        bridge.try_withdraw(&user_a, &1, &token_addr),
+        Err(Ok(Error::WithdrawalQuotaExceeded))
+    );
+    assert_eq!(
+        bridge.try_withdraw(&user_b, &1, &token_addr),
+        Err(Ok(Error::WithdrawalQuotaExceeded))
+    );
+
+    // Advance to A's reset point, but still before B's reset point.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start_ledger + 17_280;
+    });
+
+    // A can withdraw after reset; B is still quota-limited.
+    bridge.withdraw(&user_a, &100, &token_addr);
+    assert_eq!(bridge.get_user_daily_withdrawal(&user_a), 100);
+    assert_eq!(
+        bridge.try_withdraw(&user_b, &1, &token_addr),
+        Err(Ok(Error::WithdrawalQuotaExceeded))
+    );
+
+    // Advance past B's reset point; B can now withdraw independently.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start_ledger + 17_380;
+    });
+
+    bridge.withdraw(&user_b, &100, &token_addr);
+    assert_eq!(bridge.get_user_daily_withdrawal(&user_b), 100);
 }
 
 #[test]
@@ -1820,11 +1891,11 @@ fn test_heartbeat_with_valid_nonce_succeeds() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // First heartbeat with nonce 0
     bridge.heartbeat(&operator, &0);
     assert_eq!(bridge.get_operator_nonce(&operator), 1);
-    
+
     // Second heartbeat with nonce 1
     bridge.heartbeat(&operator, &1);
     assert_eq!(bridge.get_operator_nonce(&operator), 2);
@@ -1839,15 +1910,15 @@ fn test_heartbeat_with_stale_nonce_fails() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // First heartbeat with nonce 0
     bridge.heartbeat(&operator, &0);
     assert_eq!(bridge.get_operator_nonce(&operator), 1);
-    
+
     // Try to replay with nonce 0 (stale)
     let result = bridge.try_heartbeat(&operator, &0);
     assert_eq!(result, Err(Ok(Error::StaleNonce)));
-    
+
     // Nonce should remain unchanged
     assert_eq!(bridge.get_operator_nonce(&operator), 1);
 }
@@ -1861,11 +1932,11 @@ fn test_heartbeat_with_future_nonce_fails() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // Try to use nonce 5 when current is 0
     let result = bridge.try_heartbeat(&operator, &5);
     assert_eq!(result, Err(Ok(Error::InvalidNonce)));
-    
+
     // Nonce should remain unchanged
     assert_eq!(bridge.get_operator_nonce(&operator), 0);
 }
@@ -1879,20 +1950,20 @@ fn test_heartbeat_replay_attack_prevented() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // Execute heartbeat with nonce 0
     bridge.heartbeat(&operator, &0);
     let first_heartbeat = bridge.get_operator_heartbeat(&operator);
-    
+
     // Advance ledger
     env.ledger().with_mut(|li| {
         li.sequence_number += 10;
     });
-    
+
     // Try to replay the same nonce
     let result = bridge.try_heartbeat(&operator, &0);
     assert_eq!(result, Err(Ok(Error::StaleNonce)));
-    
+
     // Heartbeat timestamp should not have changed
     assert_eq!(bridge.get_operator_heartbeat(&operator), first_heartbeat);
 }
@@ -1908,16 +1979,16 @@ fn test_nonce_is_per_operator() {
 
     bridge.set_operator(&operator_a, &true);
     bridge.set_operator(&operator_b, &true);
-    
+
     // Both start at nonce 0
     assert_eq!(bridge.get_operator_nonce(&operator_a), 0);
     assert_eq!(bridge.get_operator_nonce(&operator_b), 0);
-    
+
     // Operator A uses nonce 0
     bridge.heartbeat(&operator_a, &0);
     assert_eq!(bridge.get_operator_nonce(&operator_a), 1);
     assert_eq!(bridge.get_operator_nonce(&operator_b), 0);
-    
+
     // Operator B can still use nonce 0
     bridge.heartbeat(&operator_b, &0);
     assert_eq!(bridge.get_operator_nonce(&operator_a), 1);
@@ -1933,7 +2004,7 @@ fn test_nonce_increments_monotonically() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // Execute multiple heartbeats
     for i in 0..10 {
         assert_eq!(bridge.get_operator_nonce(&operator), i);
@@ -1951,17 +2022,17 @@ fn test_nonce_skipping_not_allowed() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // Use nonce 0
     bridge.heartbeat(&operator, &0);
-    
+
     // Try to skip to nonce 2 (skipping 1)
     let result = bridge.try_heartbeat(&operator, &2);
     assert_eq!(result, Err(Ok(Error::InvalidNonce)));
-    
+
     // Nonce should still be 1
     assert_eq!(bridge.get_operator_nonce(&operator), 1);
-    
+
     // Using nonce 1 should work
     bridge.heartbeat(&operator, &1);
     assert_eq!(bridge.get_operator_nonce(&operator), 2);
@@ -1976,25 +2047,25 @@ fn test_nonce_persists_across_operator_deactivation() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // Use nonce 0 and 1
     bridge.heartbeat(&operator, &0);
     bridge.heartbeat(&operator, &1);
     assert_eq!(bridge.get_operator_nonce(&operator), 2);
-    
+
     // Deactivate operator
     bridge.set_operator(&operator, &false);
-    
+
     // Nonce should still be 2
     assert_eq!(bridge.get_operator_nonce(&operator), 2);
-    
+
     // Reactivate operator
     bridge.set_operator(&operator, &true);
-    
+
     // Must use nonce 2, not 0
     let result = bridge.try_heartbeat(&operator, &0);
     assert_eq!(result, Err(Ok(Error::StaleNonce)));
-    
+
     bridge.heartbeat(&operator, &2);
     assert_eq!(bridge.get_operator_nonce(&operator), 3);
 }
@@ -2008,17 +2079,17 @@ fn test_duplicate_nonce_rejected() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // Use nonce 0
     bridge.heartbeat(&operator, &0);
-    
+
     // Try to use nonce 0 again
     let result = bridge.try_heartbeat(&operator, &0);
     assert_eq!(result, Err(Ok(Error::StaleNonce)));
-    
+
     // Use nonce 1
     bridge.heartbeat(&operator, &1);
-    
+
     // Try to use nonce 1 again
     let result = bridge.try_heartbeat(&operator, &1);
     assert_eq!(result, Err(Ok(Error::StaleNonce)));
@@ -2033,22 +2104,28 @@ fn test_nonce_validation_before_heartbeat_update() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     let initial_ledger = env.ledger().sequence();
     bridge.heartbeat(&operator, &0);
-    assert_eq!(bridge.get_operator_heartbeat(&operator), Some(initial_ledger));
-    
+    assert_eq!(
+        bridge.get_operator_heartbeat(&operator),
+        Some(initial_ledger)
+    );
+
     // Advance ledger
     env.ledger().with_mut(|li| {
         li.sequence_number += 5;
     });
-    
+
     // Try with invalid nonce - heartbeat should not update
     let result = bridge.try_heartbeat(&operator, &0);
     assert_eq!(result, Err(Ok(Error::StaleNonce)));
-    
+
     // Heartbeat timestamp should not have changed
-    assert_eq!(bridge.get_operator_heartbeat(&operator), Some(initial_ledger));
+    assert_eq!(
+        bridge.get_operator_heartbeat(&operator),
+        Some(initial_ledger)
+    );
 }
 
 #[test]
@@ -2061,11 +2138,11 @@ fn test_non_operator_cannot_use_nonce() {
 
     // Don't set as operator
     assert!(!bridge.is_operator(&non_operator));
-    
+
     // Try to heartbeat with nonce 0
     let result = bridge.try_heartbeat(&non_operator, &0);
     assert_eq!(result, Err(Ok(Error::NotOperator)));
-    
+
     // Nonce should still be 0 (unchanged)
     assert_eq!(bridge.get_operator_nonce(&non_operator), 0);
 }
@@ -2079,17 +2156,17 @@ fn test_nonce_overflow_protection() {
     let operator = Address::generate(&env);
 
     bridge.set_operator(&operator, &true);
-    
+
     // Simulate high nonce value (near u64::MAX would take too long to test)
     // Instead, test that the system handles large nonces correctly
     let _large_nonce = 1_000_000u64;
-    
+
     // Manually set a high nonce by executing many operations
     // For testing purposes, we'll just verify the logic works with reasonable values
     for i in 0..100 {
         bridge.heartbeat(&operator, &i);
     }
-    
+
     assert_eq!(bridge.get_operator_nonce(&operator), 100);
 }
 
@@ -2106,7 +2183,7 @@ fn test_concurrent_operators_independent_nonces() {
     bridge.set_operator(&op1, &true);
     bridge.set_operator(&op2, &true);
     bridge.set_operator(&op3, &true);
-    
+
     // Interleaved operations
     bridge.heartbeat(&op1, &0);
     bridge.heartbeat(&op2, &0);
@@ -2114,7 +2191,7 @@ fn test_concurrent_operators_independent_nonces() {
     bridge.heartbeat(&op3, &0);
     bridge.heartbeat(&op2, &1);
     bridge.heartbeat(&op1, &2);
-    
+
     assert_eq!(bridge.get_operator_nonce(&op1), 3);
     assert_eq!(bridge.get_operator_nonce(&op2), 2);
     assert_eq!(bridge.get_operator_nonce(&op3), 1);
@@ -2165,7 +2242,10 @@ fn test_deploy_config_hash_differs_for_different_params() {
     let (_, bridge2, _, _, _, _) = setup_bridge(&env, 1000);
 
     // Different limits → different hashes
-    assert_ne!(bridge1.get_deploy_config_hash(), bridge2.get_deploy_config_hash());
+    assert_ne!(
+        bridge1.get_deploy_config_hash(),
+        bridge2.get_deploy_config_hash()
+    );
 }
 
 // ── Issue #220: fixed-point math unit tests ───────────────────────────────
@@ -2280,7 +2360,8 @@ fn test_circuit_breaker_reset_restores_withdrawals() {
 
     // Advance window so global daily volume resets
     let start = env.ledger().sequence();
-    env.ledger().with_mut(|li| li.sequence_number = start + 17_280);
+    env.ledger()
+        .with_mut(|li| li.sequence_number = start + 17_280);
 
     // Withdrawal below threshold succeeds again
     bridge.withdraw(&user, &100, &token_addr);
@@ -2516,23 +2597,11 @@ fn test_memo_hash_zero_rejected() {
     );
 
     // request_withdrawal: zero hash is rejected
-    let result = bridge.try_request_withdrawal(
-        &user,
-        &50,
-        &token_addr,
-        &Some(zero_hash),
-        &0,
-    );
+    let result = bridge.try_request_withdrawal(&user, &50, &token_addr, &Some(zero_hash), &0);
     assert_eq!(result, Err(Ok(Error::InvalidMemoHash)));
 
     // request_withdrawal: valid hash succeeds
-    bridge.request_withdrawal(
-        &user,
-        &50,
-        &token_addr,
-        &Some(valid_hash),
-        &0,
-    );
+    bridge.request_withdrawal(&user, &50, &token_addr, &Some(valid_hash), &0);
 }
 
 // ── Event topic structure tests ───────────────────────────────────────────────
@@ -2547,15 +2616,14 @@ fn assert_bridge_events_have_version(env: &Env, contract_addr: &Address, f: impl
     let raw = bridge_events.events();
     assert!(!raw.is_empty(), "no bridge events were emitted");
     for event in raw {
-        if let ContractEventBody::V0(body) = &event.body {
-            let first = body.topics.first().expect("bridge event has no topics");
-            assert_eq!(
-                *first,
-                ScVal::U32(EVENT_VERSION),
-                "bridge event first topic is not EVENT_VERSION: {:?}",
-                body
-            );
-        }
+        let ContractEventBody::V0(body) = &event.body;
+        let first = body.topics.first().expect("bridge event has no topics");
+        assert_eq!(
+            *first,
+            ScVal::U32(EVENT_VERSION),
+            "bridge event first topic is not EVENT_VERSION: {:?}",
+            body
+        );
     }
 }
 
@@ -2608,11 +2676,15 @@ mod proptest_deposit {
     use super::*;
     use proptest::prelude::*;
 
-    /// Deposit invariants that must hold for every positive amount ≤ limit:
-    ///   1. deposit() succeeds
-    ///   2. contract balance increases by exactly `amount`
-    ///   3. user balance decreases by exactly `amount`
-    ///   4. get_user_deposited() returns `amount`
+    // Deposit invariants that must hold for every positive amount <= limit:
+    // 1. deposit() succeeds
+    // 2. contract balance increases by exactly amount
+    // 3. user balance decreases by exactly amount
+    // 4. get_user_deposited() returns amount
+    //   1. deposit() succeeds
+    //   2. contract balance increases by exactly `amount`
+    //   3. user balance decreases by exactly `amount`
+    //   4. get_user_deposited() returns `amount`
     proptest! {
         #[test]
         fn deposit_invariants_hold_for_all_valid_amounts(amount in 1i128..=500i128) {
@@ -2647,4 +2719,162 @@ mod proptest_deposit {
             prop_assert_eq!(result, Err(Ok(Error::ExceedsLimit)));
         }
     }
+}
+
+// ── Per-token daily deposit limit tests (#381) ──────────────────────
+// ── Per-token daily deposit limit tests ──────────────────────────────
+
+#[test]
+fn test_daily_deposit_limit_enforced() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 1_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &10_000);
+
+    // Set daily deposit limit to 500
+    bridge.set_daily_deposit_limit(&token_addr, &500);
+
+    // Deposit 200 — should succeed (within limit)
+    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Deposit 300 — should succeed (at limit: 200 + 300 = 500)
+    bridge.deposit(&user, &300, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Deposit 1 more — should fail (exceeds daily limit)
+    let result = bridge.try_deposit(&user, &1, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    assert_eq!(result, Err(Ok(Error::DailyLimitExceeded)));
+}
+
+#[test]
+fn test_daily_deposit_limit_window_reset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 1_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &10_000);
+
+    bridge.set_daily_deposit_limit(&token_addr, &500);
+
+    // Fill the daily limit
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Confirm limit is hit
+    let result = bridge.try_deposit(&user, &1, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    assert_eq!(result, Err(Ok(Error::DailyLimitExceeded)));
+
+    // Advance ledger past the window (WINDOW_LEDGERS = 17_280)
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 17_280;
+    });
+
+    // After window reset, deposit should succeed again
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+}
+
+#[test]
+fn test_daily_deposit_limit_per_user() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 1_000);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_sac.mint(&user_a, &10_000);
+    token_sac.mint(&user_b, &10_000);
+
+    bridge.set_daily_deposit_limit(&token_addr, &500);
+
+    // User A fills their daily limit
+    bridge.deposit(&user_a, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // User A is blocked
+    let result = bridge.try_deposit(&user_a, &1, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    assert_eq!(result, Err(Ok(Error::DailyLimitExceeded)));
+
+    // User B can still deposit — limits are per-user
+    bridge.deposit(&user_b, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+}
+
+// ── Escrow accounting invariant tests (#382) ─────────────────────────
+
+#[test]
+fn test_escrow_accounting_invariant_after_full_migration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &10_000);
+
+    let deposit_amounts: [i128; 5] = [100, 250, 75, 400, 175];
+    let expected_total: i128 = deposit_amounts.iter().sum();
+
+    for amount in deposit_amounts.iter() {
+        bridge.deposit(&user, amount, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    }
+
+    // Migrate all receipts in one batch
+    let migrated = bridge.migrate_escrow(&10);
+    assert_eq!(migrated, deposit_amounts.len() as u32);
+
+    // Version must be set after full migration
+    assert_eq!(bridge.get_escrow_storage_version(), ESCROW_STORAGE_VERSION);
+
+    // Sum all EscrowRecord amounts and assert equal to deposit total
+    let mut escrow_total: i128 = 0;
+    for i in 0..(deposit_amounts.len() as u64) {
+        let record = bridge.get_escrow_record(&i).expect("escrow record must exist");
+        assert!(record.migrated);
+        assert_eq!(record.version, ESCROW_STORAGE_VERSION);
+        escrow_total += record.amount;
+    }
+    assert_eq!(escrow_total, expected_total);
+}
+
+#[test]
+fn test_escrow_partial_migration_preserves_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &10_000);
+
+    let deposit_amounts: [i128; 4] = [100, 200, 300, 400];
+    let expected_total: i128 = deposit_amounts.iter().sum();
+
+    for amount in deposit_amounts.iter() {
+        bridge.deposit(&user, amount, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    }
+
+    // Migrate only first 2 (batch_size < total)
+    let migrated1 = bridge.migrate_escrow(&2);
+    assert_eq!(migrated1, 2);
+    assert_eq!(bridge.get_migration_cursor(), 2);
+    // Version stays 0 until complete
+    assert_eq!(bridge.get_escrow_storage_version(), 0);
+
+    // First 2 records exist, last 2 don't yet
+    assert!(bridge.get_escrow_record(&0).is_some());
+    assert!(bridge.get_escrow_record(&1).is_some());
+    assert!(bridge.get_escrow_record(&2).is_none());
+    assert!(bridge.get_escrow_record(&3).is_none());
+
+    // Migrate the remaining
+    let migrated2 = bridge.migrate_escrow(&10);
+    assert_eq!(migrated2, 2);
+    assert_eq!(bridge.get_migration_cursor(), 4);
+    assert_eq!(bridge.get_escrow_storage_version(), ESCROW_STORAGE_VERSION);
+
+    // All records now exist and totals match
+    let mut escrow_total: i128 = 0;
+    for i in 0..4u64 {
+        let record = bridge.get_escrow_record(&i).expect("escrow record must exist");
+        assert!(record.migrated);
+        escrow_total += record.amount;
+    }
+    assert_eq!(escrow_total, expected_total);
 }
