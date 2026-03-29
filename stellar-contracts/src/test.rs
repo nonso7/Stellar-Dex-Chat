@@ -2119,6 +2119,15 @@ fn test_concurrent_operators_independent_nonces() {
     assert_eq!(bridge.get_operator_nonce(&op2), 2);
     assert_eq!(bridge.get_operator_nonce(&op3), 1);
 }
+    bridge.heartbeat(&op1, &1);
+    bridge.heartbeat(&op3, &0);
+    bridge.heartbeat(&op2, &1);
+    bridge.heartbeat(&op1, &2);
+    
+    assert_eq!(bridge.get_operator_nonce(&op1), 3);
+    assert_eq!(bridge.get_operator_nonce(&op2), 2);
+    assert_eq!(bridge.get_operator_nonce(&op3), 1);
+}
 
 // ── Issue #214: deployment config hash tests ─────────────────────────────
 
