@@ -1159,14 +1159,23 @@ impl FiatBridge {
             slippage_bps as u32,
         );
 
-        // Check slippage using integer arithmetic to avoid floating point errors:
-        // We want: floor((expected - actual) * 10_000 / expected) <= max_slippage_bps
-        // This is equivalent to: (expected - actual) * 10_000 <= max_slippage_bps * expected + (expected - 1)
-        // So reject if: (expected - actual) * 10_000 > max_slippage_bps * expected + (expected - 1)
+        // Check slippage using cross-multiplication to avoid division errors.
+        // We want to reject when slippage exceeds max, with special handling for boundaries.
+        // At the exact boundary (slippage = max), we should allow the operation.
         if actual_price < expected_price {
             let diff = expected_price - actual_price;
-            // Check: floor(diff * 10_000 / expected) > max_slippage_bps
-            if diff * 10_000 > (max_slippage_bps as i128) * expected_price + expected_price - 1 {
+            let max_i128 = max_slippage_bps as i128;
+            let threshold = max_i128 * expected_price;
+            
+            // For max_slippage=0, any slippage must be rejected (use >=)  
+            // For max_slippage>0, only reject when strictly exceeding (use >)
+            let should_reject = if max_slippage_bps == 0 {
+                diff * 10_000 >= threshold
+            } else {
+                diff * 10_000 > threshold
+            };
+            
+            if should_reject {
                 return Err(Error::SlippageTooHigh);
             }
         }
