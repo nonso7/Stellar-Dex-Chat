@@ -5,7 +5,7 @@
       "u32:1",
       "symbol:quota_reset"
     ],
-    "data": "tuple:[address:user,u32:17380]"
+    "data": "tuple:[address:user,u32:17281]"
   },
   {
     "contract": "bridge",

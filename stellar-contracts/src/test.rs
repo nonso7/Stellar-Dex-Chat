@@ -3020,24 +3020,17 @@ fn test_event_snapshot_quota_reset() {
     let (contract_id, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
     let user = Address::generate(&env);
 
-    token_sac.mint(&contract_id, &1_000);
-    env.as_contract(&contract_id, || {
-        env.storage()
-            .instance()
-            .set(&DataKey::UserDeposited(user.clone()), &1_000i128);
-        env.storage()
-            .instance()
-            .set(&DataKey::WithdrawalQuota, &500i128);
-        env.storage().instance().set(
-            &DataKey::UserDailyWithdrawal(user.clone()),
-            &UserDailyWithdrawal {
-                amount: 500,
-                window_start: 100,
-            },
-        );
-    });
+    token_sac.mint(&user, &5_000);
+    bridge.deposit(&user, &2_000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.set_withdrawal_quota(&500);
+    bridge.withdraw(&admin, &user, &500, &token_addr);
+
+    let result = bridge.try_withdraw(&admin, &user, &100, &token_addr);
+    assert_eq!(result, Err(Ok(Error::WithdrawalQuotaExceeded)));
+
+    let start_ledger = env.ledger().sequence();
     env.ledger().with_mut(|li| {
-        li.sequence_number = 17_380;
+        li.sequence_number = start_ledger + 17_280;
     });
 
     bridge.withdraw(&admin, &user, &500, &token_addr);
@@ -3053,7 +3046,7 @@ fn test_event_snapshot_quota_reset() {
                     EVENT_VERSION.into_val(&env),
                     Symbol::new(&env, "quota_reset").into_val(&env)
                 ],
-                (user.clone(), 17_380u32).into_val(&env)
+                (user.clone(), start_ledger + 17_280).into_val(&env)
             ),
             (
                 contract_id,
@@ -3073,7 +3066,7 @@ fn test_event_snapshot_quota_reset() {
         &[
             SnapshotEvent {
                 topics: StdVec::from(["u32:1".into(), "symbol:quota_reset".into()]),
-                data: "tuple:[address:user,u32:17380]".into(),
+                data: "tuple:[address:user,u32:17281]".into(),
             },
             SnapshotEvent {
                 topics: StdVec::from([
