@@ -2720,3 +2720,79 @@ mod proptest_deposit {
         }
     }
 }
+
+// ── Per-token daily deposit limit tests ──────────────────────────────
+
+#[test]
+fn test_daily_deposit_limit_enforced() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 1_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &10_000);
+
+    // Set daily deposit limit to 500
+    bridge.set_daily_deposit_limit(&token_addr, &500);
+
+    // Deposit 200 — should succeed (within limit)
+    bridge.deposit(&user, &200, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Deposit 300 — should succeed (at limit: 200 + 300 = 500)
+    bridge.deposit(&user, &300, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Deposit 1 more — should fail (exceeds daily limit)
+    let result = bridge.try_deposit(&user, &1, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    assert_eq!(result, Err(Ok(Error::DailyLimitExceeded)));
+}
+
+#[test]
+fn test_daily_deposit_limit_window_reset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 1_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &10_000);
+
+    bridge.set_daily_deposit_limit(&token_addr, &500);
+
+    // Fill the daily limit
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Confirm limit is hit
+    let result = bridge.try_deposit(&user, &1, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    assert_eq!(result, Err(Ok(Error::DailyLimitExceeded)));
+
+    // Advance ledger past the window (WINDOW_LEDGERS = 17_280)
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 17_280;
+    });
+
+    // After window reset, deposit should succeed again
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+}
+
+#[test]
+fn test_daily_deposit_limit_per_user() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 1_000);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_sac.mint(&user_a, &10_000);
+    token_sac.mint(&user_b, &10_000);
+
+    bridge.set_daily_deposit_limit(&token_addr, &500);
+
+    // User A fills their daily limit
+    bridge.deposit(&user_a, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // User A is blocked
+    let result = bridge.try_deposit(&user_a, &1, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    assert_eq!(result, Err(Ok(Error::DailyLimitExceeded)));
+
+    // User B can still deposit — limits are per-user
+    bridge.deposit(&user_b, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+}
