@@ -2780,7 +2780,7 @@ fn test_memo_hash_zero_rejected() {
 /// Assert that every event emitted by the bridge contract in `f` has `EVENT_VERSION` (u32)
 /// as its first XDR topic.
 fn assert_bridge_events_have_version(env: &Env, contract_addr: &Address, f: impl FnOnce()) {
-    use soroban_sdk::xdr::{ContractEventBody, ScVal, ScMapEntry, ScSymbol, StringM};
+    use soroban_sdk::xdr::{ContractEventBody, ScVal, ScSymbol, StringM};
 
     f();
     let bridge_events = env.events().all().filter_by_contract(contract_addr);
