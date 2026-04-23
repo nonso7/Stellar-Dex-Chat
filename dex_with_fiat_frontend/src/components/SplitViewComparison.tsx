@@ -35,6 +35,11 @@ function ThreadPane({
 }: ThreadPaneProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const paneId = `split-pane-${label.toLowerCase()}-region`;
+  const [mounted, setMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const scrollToMessage = (id: string) => {
     const el = scrollRef.current?.querySelector(`[data-message-id="${id}"]`);
@@ -47,6 +52,16 @@ function ThreadPane({
     const newId = selectedMessageId === msg.id ? null : msg.id;
     onSelectMessage(newId);
     if (newId) scrollToMessage(newId);
+  };
+
+  const formatTimestamp = (timestamp: number) => {
+    if (!mounted) return ''; // Avoid hydration mismatch by not rendering on server
+    return new Date(timestamp).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   };
 
   return (
@@ -130,14 +145,9 @@ function ThreadPane({
                   <p className="mt-1 line-clamp-3 leading-relaxed text-[var(--color-text-secondary)]">
                     {msg.content}
                   </p>
-                  <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                    {new Date(msg.timestamp).toLocaleString([], {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </p>
+                   <p className="mt-1 text-[10px] text-[var(--color-text-muted)]" data-testid="message-timestamp">
+                     {formatTimestamp(msg.timestamp)}
+                   </p>
                 </button>
               );
             })

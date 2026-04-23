@@ -240,4 +240,18 @@ describe('SplitViewComparison – network status toasts', () => {
       );
     });
   });
+
+  it('prevents hydration mismatch by not rendering timestamps until mounted', () => {
+    const splitView = makeSplitView({ leftSessionId: 's1' });
+    const { container } = render(<SplitViewComparison splitView={splitView} sessions={allSessions} />);
+
+    // Initially, timestamps should be empty to avoid hydration mismatch
+    const timestampElements = container.querySelectorAll('[data-testid="message-timestamp"]');
+    timestampElements.forEach(el => {
+      expect(el.textContent).toBe('');
+    });
+
+    // Note: In a real hydration scenario, we would check that server and client render match,
+    // but for this test we verify the timestamp is hidden initially
+  });
 });

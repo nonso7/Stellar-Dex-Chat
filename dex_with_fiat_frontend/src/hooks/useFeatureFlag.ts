@@ -9,11 +9,13 @@ const useIsomorphicLayoutEffect =
 /**
  * Hook to check if a feature flag is enabled.
  * Includes runtime validation using Zod to ensure the flag name is valid.
- * 
+ * When enabled, automatically scrolls to the specified target element for better UX.
+ *
  * @param flag - The name of the feature flag to check.
+ * @param scrollTargetId - Optional element ID to scroll to when the flag becomes enabled.
  * @returns boolean indicating if the flag is enabled.
  */
-export function useFeatureFlag(flag: FeatureFlag) {
+export function useFeatureFlag(flag: FeatureFlag, scrollTargetId?: string) {
   // Initialize to false for safe hydration, then update to actual value.
   const [isEnabled, setIsEnabled] = useState(false);
 
@@ -29,8 +31,17 @@ export function useFeatureFlag(flag: FeatureFlag) {
       return;
     }
 
-    setIsEnabled(getFeatureFlag(flag));
-  }, [flag]);
+    const newEnabled = getFeatureFlag(flag);
+    setIsEnabled(newEnabled);
+
+    // Auto-scroll behavior: if flag becomes enabled and scrollTargetId is provided, scroll to it
+    if (newEnabled && scrollTargetId && typeof window !== 'undefined') {
+      const element = document.getElementById(scrollTargetId);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  }, [flag, scrollTargetId]);
 
   return isEnabled;
 }
