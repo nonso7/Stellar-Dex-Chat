@@ -82,6 +82,8 @@ pub enum Error {
     FeeWithdrawalExceedsBalance = 313,
     CircuitBreakerTripped = 314,
     MaxDeniedReached = 315,
+    /// `set_limit` would exceed the admin-configured ceiling from `set_limit_max_cap`.
+    ExceedsLimitMaxCap = 316,
 
     // --- 400 series: Funds & Balances ---
     InsufficientFunds = 401,
@@ -376,6 +378,21 @@ pub struct SetMinDepositEvent {
 
 #[contractevent]
 #[derive(Clone, Debug)]
+pub struct SetLimitMaxCapEvent {
+    pub version: u32,
+    pub max_cap: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct SetLimitEvent {
+    pub version: u32,
+    pub token: Address,
+    pub limit: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
 pub struct SlippageEvent {
     pub version: u32,
     pub slippage_bps: u32,
@@ -638,6 +655,8 @@ pub enum DataKey {
     NextMultisigID,
     // ── Issue #695: replay protection for withdraw_fees ──────────────────
     FeeWithdrawalNonce(Address),
+    /// Maximum value allowed for per-token liability limits via `set_limit`.
+    SetLimitMaxCap,
 }
 
 const ORACLE_PRICE_DECIMALS: i128 = 10_000_000;
@@ -723,6 +742,9 @@ impl FiatBridge {
         env.storage()
             .instance()
             .set(&DataKey::UpgradeDelay, &MIN_UPGRADE_DELAY);
+        env.storage()
+            .instance()
+            .set(&DataKey::SetLimitMaxCap, &i128::MAX);
 
         // ── Issue #214: store and emit immutable deployment config hash ──
         let config_data = (admin.clone(), token.clone(), limit);
@@ -1621,6 +1643,14 @@ impl FiatBridge {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
+        let max_cap: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SetLimitMaxCap)
+            .unwrap_or(i128::MAX);
+        if limit > max_cap {
+            return Err(Error::ExceedsLimitMaxCap);
+        }
         let mut config: TokenConfig = env
             .storage()
             .persistent()
@@ -1629,8 +1659,47 @@ impl FiatBridge {
         config.limit = limit;
         env.storage()
             .persistent()
-            .set(&DataKey::TokenRegistry(token), &config);
+            .set(&DataKey::TokenRegistry(token.clone()), &config);
+        SetLimitEvent {
+            version: EVENT_VERSION,
+            token: token.clone(),
+            limit,
+        }
+        .publish(&env);
         Ok(())
+    }
+
+    /// Sets the maximum value that `set_limit` may assign for any token.
+    ///
+    /// Defaults to `i128::MAX` after `init` (no practical ceiling). Admins should
+    /// set this to a risk-appropriate cap in production.
+    pub fn set_limit_max_cap(env: Env, max_cap: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        if max_cap < 1 {
+            return Err(Error::ZeroAmount);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::SetLimitMaxCap, &max_cap);
+        SetLimitMaxCapEvent {
+            version: EVENT_VERSION,
+            max_cap,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    pub fn get_set_limit_max_cap(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SetLimitMaxCap)
+            .unwrap_or(i128::MAX)
     }
 
     pub fn set_token_allowlist_enabled(

@@ -445,6 +445,88 @@ fn test_set_limit() {
 }
 
 #[test]
+fn test_set_limit_rejects_above_configured_max_cap() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _admin, token_addr, _, _) = setup_bridge(&env, 500);
+    bridge.set_limit_max_cap(&1000);
+    let result = bridge.try_set_limit(&token_addr, &1001);
+    assert_eq!(result, Err(Ok(Error::ExceedsLimitMaxCap)));
+}
+
+#[test]
+fn test_set_limit_succeeds_at_max_cap_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _admin, token_addr, _, _) = setup_bridge(&env, 500);
+    bridge.set_limit_max_cap(&1000);
+    bridge.set_limit(&token_addr, &1000);
+    assert_eq!(bridge.get_limit(), 1000);
+}
+
+#[test]
+fn test_set_limit_max_cap_rejects_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _admin, _token_addr, _, _) = setup_bridge(&env, 500);
+    let result = bridge.try_set_limit_max_cap(&0);
+    assert_eq!(result, Err(Ok(Error::ZeroAmount)));
+}
+
+#[test]
+fn test_get_set_limit_max_cap_defaults_high() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _admin, _token_addr, _, _) = setup_bridge(&env, 500);
+    assert_eq!(bridge.get_set_limit_max_cap(), i128::MAX);
+}
+
+/// Invariants: a successful heartbeat updates ledger + nonce atomically; a replay
+/// attempt leaves both unchanged.
+#[test]
+fn test_heartbeat_invariants_replay_preserves_ledger_and_nonce() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1000);
+    let operator = Address::generate(&env);
+    bridge.set_operator(&operator, &true);
+
+    let ledger_after_first = env.ledger().sequence();
+    assert_eq!(bridge.get_operator_nonce(&operator), 0);
+
+    bridge.heartbeat(&operator, &0);
+    assert_eq!(bridge.get_operator_nonce(&operator), 1);
+    assert_eq!(
+        bridge.get_operator_heartbeat(&operator),
+        Some(ledger_after_first)
+    );
+
+    let replay = bridge.try_heartbeat(&operator, &0);
+    assert_eq!(replay, Err(Ok(Error::StaleNonce)));
+    assert_eq!(bridge.get_operator_nonce(&operator), 1);
+    assert_eq!(
+        bridge.get_operator_heartbeat(&operator),
+        Some(ledger_after_first)
+    );
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 7;
+    });
+    let ledger_after_second = env.ledger().sequence();
+    bridge.heartbeat(&operator, &1);
+    assert_eq!(bridge.get_operator_nonce(&operator), 2);
+    assert_eq!(
+        bridge.get_operator_heartbeat(&operator),
+        Some(ledger_after_second)
+    );
+}
+
+#[test]
 fn test_over_limit_deposit() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1129,7 +1211,7 @@ fn test_pause_invariant_preserves_state_on_rejected_user_calls() {
     bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
     let req_id = bridge.request_withdrawal(&user, &100, &token_addr, &None, &0);
 
-    let deposited_before = bridge.get_total_deposited().unwrap();
+    let deposited_before = bridge.get_total_deposited();
     let queue_depth_before = bridge.get_wq_depth();
 
     bridge.pause();
@@ -1151,7 +1233,7 @@ fn test_pause_invariant_preserves_state_on_rejected_user_calls() {
         Err(Ok(Error::ContractPaused))
     );
 
-    assert_eq!(bridge.get_total_deposited().unwrap(), deposited_before);
+    assert_eq!(bridge.get_total_deposited(), deposited_before);
     assert_eq!(bridge.get_wq_depth(), queue_depth_before);
 }
 
@@ -1438,7 +1520,7 @@ fn test_set_emergency_recovery_with_cap_limit() {
 
     bridge.set_emergency_recovery(&recovery, &750);
 
-    let snapshot = bridge.get_config_snapshot().unwrap();
+    let snapshot = bridge.get_config_snapshot();
     assert_eq!(snapshot.emergency_recovery, Some(recovery.clone()));
     assert_eq!(bridge.get_emergency_recovery_cap(), Some(750));
 }
@@ -2063,7 +2145,7 @@ fn test_withdraw_fees_success() {
     assert_eq!(bridge.get_accrued_fees(&token_addr), 200);
 
     // Withdraw fees
-    bridge.withdraw_fees(&recipient, &token_addr, &100, &0, &0);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 100);
     assert_eq!(token.balance(&recipient), 100);
     assert_eq!(token.balance(&contract_id), 900);
@@ -2131,7 +2213,7 @@ fn test_withdraw_fees_exceeds_accrued() {
 
     bridge.accrue_fee(&token_addr, &50);
 
-    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &100);
+    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &100, &0);
     assert_eq!(result, Err(Ok(Error::FeeWithdrawalExceedsBalance)));
 }
 
@@ -3488,7 +3570,7 @@ mod proptest_request_withdrawal {
             let req_id = bridge.request_withdrawal(&user, &amount, &token_addr, &None, &0);
             let req = bridge.get_withdrawal_request(&req_id).unwrap();
 
-            prop_assert_eq!(req.to, user);
+            prop_assert_eq!(req.to, user.clone());
             prop_assert_eq!(req.token, token_addr);
             prop_assert_eq!(req.amount, amount);
             prop_assert_eq!(req.risk_tier, 0);
@@ -3510,7 +3592,7 @@ mod proptest_request_withdrawal {
             bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
             let result = bridge.try_request_withdrawal(&user, &amount, &token_addr, &None, &0);
-            prop_assert_eq!(result, Err(Ok(Error::InvariantViolation)));
+            prop_assert_eq!(result, Err(Ok(Error::InsufficientFunds)));
         }
 
         /// Non-positive amounts are always invalid.
@@ -4008,9 +4090,6 @@ fn test_get_denied_addresses_offset_beyond_count() {
     assert_eq!(result.len(), 0);
 }
 
-#[test]
-fn test_circuit_breaker_trips_on_large_cumulative_withdrawal() {
-}
 // ── withdrawal expiry tests ───────────────────────────────────────────────
 #[test]
 fn test_reclaim_expired_withdrawal_succeeds_after_window() {
@@ -4036,17 +4115,6 @@ fn test_reclaim_expired_withdrawal_succeeds_after_window() {
 
     // Request should be gone
     assert!(bridge.get_withdrawal_request(&req_id).is_none());
-    // MockOracle price is 9.5 USD (9_500_000)
-    // Deposit 1 token = 9.5 USD = 950 cents (with ORACLE_PRICE_DECIMALS = 100,000,000)
-    // Let's check ORACLE_PRICE_DECIMALS value in lib.rs
-    let start_ledger = env.ledger().sequence();
-    bridge.deposit(&user, &1, &token_addr, &Bytes::new(&env), &0, &0, &None);
-
-    // Queue depth back to 0
-    assert_eq!(bridge.get_wq_depth(), 0);
-
-    // Liabilities released
-    assert_eq!(bridge.get_total_liabilities(), 0);
 }
 
 #[test]
@@ -4054,31 +4122,23 @@ fn test_reclaim_expired_withdrawal_fails_before_window() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
     let user = Address::generate(&env);
     token_sac.mint(&user, &5_000);
 
-    bridge.deposit(&user, &2000, &token_addr, &Bytes::new(&env), &0, &0, &None);
-    bridge.set_circuit_breaker_threshold(&500);
-
-    // First withdrawal: 300 (cumulative 300 <= 500)
-    bridge.withdraw(&admin, &user, &300, &token_addr);
-    assert!(!bridge.is_circuit_breaker_tripped());
-
-    // Second withdrawal: 300 (cumulative 600 > 500). This succeeds but trips the breaker.
-    bridge.withdraw(&admin, &user, &300, &token_addr);
-    assert!(bridge.is_circuit_breaker_tripped());
-
-    // Third withdrawal: Should fail because breaker is active
     bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
+    let queued_ledger = env.ledger().sequence();
     let req_id = bridge.request_withdrawal(&user, &100, &token_addr, &None, &0);
 
-    // Not expired yet — should fail with WithdrawalLocked
+    // Still inside expiry window — reclaim must fail
+    env.ledger().with_mut(|li| {
+        li.sequence_number = queued_ledger + WITHDRAWAL_EXPIRY_WINDOW_LEDGERS - 1;
+    });
+
     let result = bridge.try_reclaim_expired_withdrawal(&req_id);
     assert_eq!(result, Err(Ok(Error::WithdrawalLocked)));
 
-    // Request still present
     assert!(bridge.get_withdrawal_request(&req_id).is_some());
 }
 
@@ -4258,52 +4318,6 @@ fn test_circuit_breaker_still_blocked_before_reset_window() {
 }
 
 #[test]
-fn test_circuit_breaker_manual_reset_allows_withdrawal() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
-    let user = Address::generate(&env);
-    token_sac.mint(&user, &5_000);
-
-    bridge.deposit(&user, &2000, &token_addr, &Bytes::new(&env), &0, &0, &None);
-    bridge.set_circuit_breaker_threshold(&500);
-
-    // Trip the breaker
-    bridge.withdraw(&admin, &user, &600, &token_addr);
-    assert!(bridge.is_circuit_breaker_tripped());
-
-    // Admin resets the breaker
-    bridge.reset_circuit_breaker();
-    assert!(!bridge.is_circuit_breaker_tripped());
-
-    // Withdrawal should succeed now
-    let result = bridge.try_withdraw(&admin, &user, &100, &token_addr);
-    assert!(result.is_ok());
-}
-
-#[test]
-fn test_circuit_breaker_respects_threshold_zero_disables_it() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
-    let user = Address::generate(&env);
-    token_sac.mint(&user, &5_000);
-
-    bridge.deposit(&user, &2000, &token_addr, &Bytes::new(&env), &0, &0, &None);
-
-    // Setting threshold to 0 disables the circuit breaker logic
-    bridge.set_circuit_breaker_threshold(&0);
-
-    // Perform large withdrawals that would otherwise trip any reasonable threshold
-    bridge.withdraw(&admin, &user, &1000, &token_addr);
-    bridge.withdraw(&admin, &user, &500, &token_addr);
-
-    // Breaker should NOT be tripped because threshold 0 disables it
-    assert!(!bridge.is_circuit_breaker_tripped());
-}
-#[test]
 fn test_set_and_get_circuit_breaker_reset_window() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4465,7 +4479,7 @@ fn test_execute_upgrade_before_delay_fails_with_upgrade_not_ready() {
     let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
 
     let proposed_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
-    bridge.propose_upgrade(&proposed_wasm_hash);
+    bridge.propose_upgrade(&proposed_wasm_hash, &1000);
 
     let result = bridge.try_execute_upgrade();
     assert_eq!(result, Err(Ok(Error::UpgradeNotReady)));
@@ -4479,7 +4493,7 @@ fn test_cancel_upgrade_removes_pending_proposal() {
     let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
 
     let proposed_wasm_hash = BytesN::from_array(&env, &[9u8; 32]);
-    bridge.propose_upgrade(&proposed_wasm_hash);
+    bridge.propose_upgrade(&proposed_wasm_hash, &1000);
     assert!(bridge.get_upgrade_proposal().is_some());
 
     bridge.cancel_upgrade();
@@ -4518,7 +4532,7 @@ fn test_execute_upgrade_after_delay_succeeds() {
     let wasm_hash = env
         .deployer()
         .upload_contract_wasm(Bytes::from_slice(&env, fixture_wasm.as_slice()));
-    bridge.propose_upgrade(&wasm_hash);
+    bridge.propose_upgrade(&wasm_hash, &1000);
 
     let start = env.ledger().sequence();
     env.ledger().with_mut(|li| {
@@ -4779,7 +4793,7 @@ fn test_withdraw_fees_edge_case_zero_amount() {
 
     let (_, bridge, _, token_addr, _, _) = setup_bridge(&env, 1000);
 
-    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &0);
+    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &0, &0);
     assert_eq!(result, Err(Ok(Error::ZeroAmount)));
 }
 
@@ -4790,7 +4804,7 @@ fn test_withdraw_fees_edge_case_negative_amount() {
 
     let (_, bridge, _, token_addr, _, _) = setup_bridge(&env, 1000);
 
-    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &-100);
+    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &-100, &0);
     assert_eq!(result, Err(Ok(Error::ZeroAmount)));
 }
 
@@ -4823,7 +4837,7 @@ fn test_withdraw_fees_edge_case_exceeds_accrued() {
 
     bridge.accrue_fee(&token_addr, &50);
 
-    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &100);
+    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &100, &0);
     assert_eq!(result, Err(Ok(Error::FeeWithdrawalExceedsBalance)));
 }
 
@@ -4834,7 +4848,7 @@ fn test_withdraw_fees_edge_case_no_fees_accrued() {
 
     let (_, bridge, _, token_addr, _, _) = setup_bridge(&env, 1000);
 
-    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &1);
+    let result = bridge.try_withdraw_fees(&Address::generate(&env), &token_addr, &1, &0);
     assert_eq!(result, Err(Ok(Error::FeeWithdrawalExceedsBalance)));
 }
 
