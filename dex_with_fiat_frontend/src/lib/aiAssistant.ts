@@ -61,6 +61,7 @@ export interface PaginationResult<T> {
  * for the Stellar FiatBridge frontend assistant.
  */
 export class AIAssistant {
+  private abortController: AbortController | null = null;
   private static guardrailCounts: Record<GuardrailCategory, number> = {
     unsupported_request: 0,
     wallet_security: 0,
@@ -117,12 +118,17 @@ export class AIAssistant {
     context?: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<AIAnalysisResult> {
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.abortController = new AbortController();
+    const controllerSignal = signal || this.abortController.signal;
     try {
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, context }),
-        signal,
+        signal: controllerSignal,
       });
 
       if (!response.ok) {
@@ -511,6 +517,11 @@ Choose one of the next actions below and I'll keep it moving.`;
     missingData: string[],
     signal?: AbortSignal,
   ): Promise<string> {
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.abortController = new AbortController();
+    const controllerSignal = signal || this.abortController.signal;
     try {
       const response = await fetch('/api/ai/chat', {
         method: 'POST',
@@ -518,7 +529,7 @@ Choose one of the next actions below and I'll keep it moving.`;
         body: JSON.stringify({
           message: `Generate a single, natural follow-up question for a Stellar DeFi assistant. Intent: ${intent}. Missing data: ${missingData.join(', ')}. Return only the question text.`,
         }),
-        signal,
+        signal: controllerSignal,
       });
       if (response.ok) {
         const result = await response.json() as AIAnalysisResult;

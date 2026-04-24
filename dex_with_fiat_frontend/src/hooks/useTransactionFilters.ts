@@ -68,6 +68,7 @@ export function useTransactionFilters(
   const searchParams = useSearchParams();
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingFilterStateRef = useRef<FilterState | null>(null);
+  const lastUpdateTimeRef = useRef<number>(0);
   const [optimisticFilterState, setOptimisticFilterState] = useState<FilterState | null>(
     null,
   );
@@ -125,6 +126,12 @@ export function useTransactionFilters(
   // Update URL with new filter state (debounced)
   const updateUrl = useCallback(
     (newFilterState: FilterState) => {
+      const now = Date.now();
+      if (now - lastUpdateTimeRef.current < 50) {
+        return;
+      }
+      lastUpdateTimeRef.current = now;
+
       // Clear existing timer
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
