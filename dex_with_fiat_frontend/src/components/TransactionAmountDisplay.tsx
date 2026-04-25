@@ -1,25 +1,24 @@
 'use client';
 
 import { useCurrencyConversion } from '@/hooks/useCurrencyConversion';
-
-interface TransactionAmountDisplayProps {
-  amount?: number | string;
-  asset?: string;
-  fiatAmount?: string | number;
-  fiatCurrency?: string;
-}
+import { transactionAmountSchema, type TransactionAmountProps } from '@/lib/transactionSchema';
 
 /**
  * Component to display transaction amounts with live currency conversion
  * Shows format: "100 XLM ≈ $12.40 USD"
  * Falls back to just amount if price is unavailable
  */
-export function TransactionAmountDisplay({
-  amount,
-  asset,
-  fiatAmount,
-  fiatCurrency,
-}: TransactionAmountDisplayProps) {
+export function TransactionAmountDisplay(props: TransactionAmountProps) {
+  const result = transactionAmountSchema.safeParse(props);
+  
+  if (!result.success) {
+    const errorMessage = result.error.issues[0]?.message || 'Invalid Amount Data';
+    console.error('TransactionAmountDisplay: Invalid props', result.error.format());
+    return <span className="text-red-500 text-xs italic">{errorMessage}</span>;
+  }
+
+  const { amount, asset, fiatAmount, fiatCurrency } = result.data;
+  
   const numericAmount = typeof amount === 'string' ? parseFloat(amount) : amount;
   const normalizedAsset = asset || 'XLM';
   const { displayText } = useCurrencyConversion(numericAmount, normalizedAsset);

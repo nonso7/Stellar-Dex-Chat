@@ -186,3 +186,87 @@ describe('Avatar contrast helpers', () => {
     expect(withAccessibleAvatarContrast(payload)).toEqual(payload);
   });
 });
+
+// ── Regression test for issue #539 ────────────────────────────────────────
+
+describe('Rendering overflow fix (issue #539)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    setTelemetryConsent(true);
+  });
+
+  it('defers event dispatch using requestAnimationFrame to prevent render blocking', async () => {
+    const rafSpy = vi.spyOn(window, 'requestAnimationFrame');
+    const handler = vi.fn();
+    
+    window.addEventListener('chat:telemetry', handler);
+    
+    chatTelemetry.messageSend({ messageLength: 5, hasWallet: true });
+    
+    // Event should not be dispatched synchronously
+    expect(handler).not.toHaveBeenCalled();
+    expect(rafSpy).toHaveBeenCalled();
+    
+    // Wait for requestAnimationFrame to execute
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(resolve);
+      });
+    });
+    
+    expect(handler).toHaveBeenCalledTimes(1);
+    
+    window.removeEventListener('chat:telemetry', handler);
+    rafSpy.mockRestore();
+  });
+
+  it('returns the same payload reference when no avatar colors are present', () => {
+    const payload = { messageLength: 10, hasWallet: true };
+    const result = withAccessibleAvatarContrast(payload);
+    
+    // Should return the exact same reference to prevent unnecessary re-renders
+    expect(result).toBe(payload);
+  });
+
+  it('creates a new object only when avatar colors are present', () => {
+    const payload = {
+      messageLength: 10,
+      hasWallet: true,
+      avatarBackgroundColor: '#2563EB',
+    };
+    const result = withAccessibleAvatarContrast(payload);
+    
+    // Should create a new object with additional properties
+    expect(result).not.toBe(payload);
+    expect(result).toHaveProperty('avatarTextColor');
+    expect(result).toHaveProperty('avatarContrastRatio');
+    expect(result).toHaveProperty('avatarContrastCompliant');
+  });
+
+  it('handles rapid successive telemetry calls without blocking', async () => {
+    const handler = vi.fn();
+    window.addEventListener('chat:telemetry', handler);
+    
+    // Simulate rapid successive calls that could cause rendering overflow
+    for (let i = 0; i < 10; i++) {
+      chatTelemetry.messageSend({ messageLength: i, hasWallet: true });
+    }
+    
+    // Events should not be dispatched synchronously
+    expect(handler).not.toHaveBeenCalled();
+    
+    // Wait for all requestAnimationFrame callbacks to execute
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(resolve);
+        });
+      });
+    });
+    
+    // All events should eventually be dispatched
+    expect(handler).toHaveBeenCalledTimes(10);
+    
+    window.removeEventListener('chat:telemetry', handler);
+  });
+});
