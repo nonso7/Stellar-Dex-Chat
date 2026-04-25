@@ -65,6 +65,9 @@ export default function CCIPBridgeModal({
     setBridgeState('initiating');
     setErrorMessage('');
 
+    // Optimistic UI update: immediately show pending state
+    setLatestStatus('PENDING');
+
     try {
       const result = await onStartTransfer();
       const nextHash = result.transactionHash.trim();
@@ -75,12 +78,16 @@ export default function CCIPBridgeModal({
 
       pollingStartedAtRef.current = Date.now();
       setTransactionHash(nextHash);
-      setExplorerUrl(
-        result.explorerUrl ?? buildCCIPExplorerTransactionUrl(nextHash),
-      );
-      setLatestStatus('PENDING');
+      
+      // Optimistic UI: set explorer URL immediately for better UX
+      const explorerUrlValue = result.explorerUrl ?? buildCCIPExplorerTransactionUrl(nextHash);
+      setExplorerUrl(explorerUrlValue);
+      
+      // Optimistic UI: transition to polling state immediately
       setBridgeState('polling');
     } catch (error) {
+      // Rollback optimistic updates on error
+      setLatestStatus('');
       setBridgeState('error');
       setErrorMessage(
         error instanceof Error
@@ -109,17 +116,21 @@ export default function CCIPBridgeModal({
 
     try {
       const result = await fetchTransferStatus(transactionHash);
+      
+      // Optimistic UI: update status immediately
       setLatestStatus(result.status);
       if (result.explorerUrl) {
         setExplorerUrl(result.explorerUrl);
       }
 
       if (result.status === 'SUCCESS') {
+        // Optimistic UI: transition to success state immediately
         setBridgeState('success');
         return;
       }
 
       if (result.status === 'FAILED' || result.status === 'ERROR') {
+        // Optimistic UI: transition to error state immediately
         setBridgeState('error');
         setErrorMessage(
           result.errorMessage ??
@@ -128,8 +139,10 @@ export default function CCIPBridgeModal({
         return;
       }
 
+      // Optimistic UI: keep polling state for intermediate statuses
       setBridgeState('polling');
     } catch (error) {
+      // Optimistic UI: maintain PENDING status during transient errors
       setLatestStatus('PENDING');
       setBridgeState('polling');
       if (

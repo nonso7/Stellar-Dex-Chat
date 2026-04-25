@@ -8,6 +8,14 @@ use soroban_sdk::{
 pub mod math;
 pub mod oracle;
 
+macro_rules! require {
+    ($cond:expr, $err:expr) => {
+        if !($cond) {
+            return Err($err);
+        }
+    };
+}
+
 // ── Constants ─────────────────────────────────────────────────────────────
 /// Minimum TTL extension applied to instance storage on every public call (~30 days).
 pub const MIN_TTL: u32 = 518_400;
@@ -131,6 +139,13 @@ pub enum Error {
     ProposalAlreadyExecuted = 1106,
     ThresholdNotMet = 1107,
     MaxSignersReached = 1108,
+
+    // --- 1200 series: Receipt query ---
+    /// `get_receipt_by_index` was called with an index >= the receipt counter.
+    ReceiptIndexOutOfBounds = 1201,
+    /// `get_receipt_by_index` resolved to an index/hash that has no receipt
+    /// stored (typically the temporary index entry has expired).
+    ReceiptNotFound = 1202,
 }
 
 // ── Models ────────────────────────────────────────────────────────────────
@@ -2767,33 +2782,37 @@ impl FiatBridge {
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
-        if amount <= 0 {
-            return Err(Error::ZeroAmount);
-        }
+        // ── Issue #565: proper require! checks ──
+        require!(amount > 0, Error::ZeroAmount);
 
         // ── Issue #695: replay protection ────────────────────────────────
         let nonce_key = DataKey::FeeWithdrawalNonce(admin.clone());
         let expected_nonce: u64 = env.storage().persistent().get(&nonce_key).unwrap_or(0);
 
-        if nonce != expected_nonce {
-            return Err(Error::InvalidNonce);
-        }
+        require!(nonce >= expected_nonce, Error::StaleNonce);
+        require!(nonce == expected_nonce, Error::InvalidNonce);
 
         let key = DataKey::FeeVault(token.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        if amount > current {
-            return Err(Error::FeeWithdrawalExceedsBalance);
-        }
+        
+        require!(current > 0, Error::NoFeesToWithdraw);
+        require!(amount <= current, Error::FeeWithdrawalExceedsBalance);
 
+        // Boundary check: actual contract balance
         let token_client = token::Client::new(&env, &token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+        require!(amount <= contract_balance, Error::InsufficientFunds);
+
         token_client.transfer(&env.current_contract_address(), &to, &amount);
 
-        env.storage().persistent().set(&key, &(current - amount));
+        let new_balance = current.checked_sub(amount).ok_or(Error::Overflow)?;
+        env.storage().persistent().set(&key, &new_balance);
 
         // Increment nonce after successful withdrawal
+        let next_nonce = expected_nonce.checked_add(1).ok_or(Error::Overflow)?;
         env.storage()
             .persistent()
-            .set(&nonce_key, &(expected_nonce + 1));
+            .set(&nonce_key, &next_nonce);
 
         FeeWithdrawnEvent {
             version: EVENT_VERSION,
@@ -3001,20 +3020,40 @@ impl FiatBridge {
             .get(&DataKey::WithdrawCooldownThreshold)
             .unwrap_or(0)
     }
-    pub fn get_receipt_by_index(env: Env, idx: u64) -> Option<Receipt> {
+    /// Look up a receipt by its sequential deposit index.
+    ///
+    /// # Boundary checks
+    /// 1. `idx < ReceiptCounter` — refuses queries past the highest issued
+    ///    index. Without this check, callers could probe arbitrary `idx`
+    ///    values and force the contract to do unbounded storage reads, which
+    ///    is a state-explosion vector that could push the receipt index
+    ///    table past the admin-configured cap.
+    /// 2. The temporary `ReceiptIndex(idx) → hash` entry must still exist —
+    ///    soroban temporary storage TTLs out, so a previously-issued index
+    ///    can become unreachable.
+    /// 3. The persistent `Receipt(hash)` entry must still exist.
+    ///
+    /// # Errors
+    /// * [`Error::ReceiptIndexOutOfBounds`] – `idx >= ReceiptCounter`.
+    /// * [`Error::ReceiptNotFound`]         – index entry or receipt is gone.
+    pub fn get_receipt_by_index(env: Env, idx: u64) -> Result<Receipt, Error> {
         let max_receipts: u64 = env
             .storage()
             .instance()
             .get(&DataKey::ReceiptCounter)
             .unwrap_or(0);
         if idx >= max_receipts {
-            return None; // Circuit breaker triggers to prevent out of bounds execution and excessive cycles
+            return Err(Error::ReceiptIndexOutOfBounds);
         }
-        let receipt_hash: BytesN<32> =
-            env.storage().temporary().get(&DataKey::ReceiptIndex(idx))?;
+        let receipt_hash: BytesN<32> = env
+            .storage()
+            .temporary()
+            .get(&DataKey::ReceiptIndex(idx))
+            .ok_or(Error::ReceiptNotFound)?;
         env.storage()
             .persistent()
             .get(&DataKey::Receipt(receipt_hash))
+            .ok_or(Error::ReceiptNotFound)
     }
 
     pub fn get_withdrawal_request(env: Env, id: u64) -> Option<WithdrawRequest> {
@@ -4300,4 +4339,4 @@ mod test_issues_695_687;
 mod test_init_validation;
 
 #[cfg(test)]
-mod test_set_limit;
+mod test_get_receipt_by_index;

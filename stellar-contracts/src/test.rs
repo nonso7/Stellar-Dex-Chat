@@ -2055,8 +2055,6 @@ fn test_get_receipt_by_index_valid() {
     let receipt_hash = bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     let receipt = bridge.get_receipt_by_index(&0);
-    assert!(receipt.is_some());
-    let receipt = receipt.unwrap();
     assert_eq!(receipt.id, receipt_hash);
     assert_eq!(receipt.depositor, user);
     assert_eq!(receipt.amount, 100);
@@ -2074,9 +2072,15 @@ fn test_get_receipt_by_index_out_of_range() {
     bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Index 1 does not exist (only one deposit at index 0)
-    assert_eq!(bridge.get_receipt_by_index(&1), None);
+    assert_eq!(
+        bridge.try_get_receipt_by_index(&1),
+        Err(Ok(Error::ReceiptIndexOutOfBounds))
+    );
     // Large out-of-range index
-    assert_eq!(bridge.get_receipt_by_index(&999), None);
+    assert_eq!(
+        bridge.try_get_receipt_by_index(&999),
+        Err(Ok(Error::ReceiptIndexOutOfBounds))
+    );
 }
 
 #[test]
@@ -2092,12 +2096,17 @@ fn test_get_receipt_by_index_nonexistent_index() {
 
     // The receipt at index 0 should be accessible
     let receipt = bridge.get_receipt_by_index(&0);
-    assert!(receipt.is_some());
-    assert_eq!(receipt.unwrap().amount, 100);
+    assert_eq!(receipt.amount, 100);
 
-    // Indexes that were never written return None
-    assert_eq!(bridge.get_receipt_by_index(&50), None);
-    assert_eq!(bridge.get_receipt_by_index(&u64::MAX), None);
+    // Indexes that were never written return ReceiptIndexOutOfBounds.
+    assert_eq!(
+        bridge.try_get_receipt_by_index(&50),
+        Err(Ok(Error::ReceiptIndexOutOfBounds))
+    );
+    assert_eq!(
+        bridge.try_get_receipt_by_index(&u64::MAX),
+        Err(Ok(Error::ReceiptIndexOutOfBounds))
+    );
 }
 
 #[test]
@@ -3674,7 +3683,7 @@ fn test_deposit_invariant_receipt_issued_event() {
     let receipt_id = bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Verify receipt was created (receipts are indexed, so we get by index 0)
-    let receipt = bridge.get_receipt_by_index(&0).unwrap();
+    let receipt = bridge.get_receipt_by_index(&0);
     assert_eq!(receipt.depositor, user);
     assert_eq!(receipt.amount, 100);
     assert!(!receipt.refunded);
@@ -3923,11 +3932,31 @@ fn test_withdraw_fees_edge_case_multiple_withdrawals() {
     bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 200);
 
-    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &1);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 100);
 
-    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &2);
     assert_eq!(bridge.get_accrued_fees(&token_addr), 0);
+}
+
+#[test]
+fn test_withdraw_fees_edge_case_stale_nonce() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 1000);
+    let user = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    token_sac.mint(&user, &1000);
+
+    bridge.deposit(&user, &500, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    bridge.accrue_fee(&token_addr, &200);
+
+    bridge.withdraw_fees(&recipient, &token_addr, &100, &0);
+    
+    // Replay with nonce 0 should fail with StaleNonce
+    let result = bridge.try_withdraw_fees(&recipient, &token_addr, &100, &0);
+    assert_eq!(result, Err(Ok(Error::StaleNonce)));
 }
 
 #[test]
@@ -4275,4 +4304,66 @@ fn test_execute_batch_admin_pause_then_unpause_in_one_batch_restores_deposits() 
 
     bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
     assert_eq!(bridge.get_total_deposited(), before + 100);
+}
+
+// ── Issue #503: Withdrawal Quota Invariant Tests ────────────────────────
+#[test]
+fn test_withdrawal_quota_invariant_enforcement() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &5_000);
+
+    bridge.deposit(&user, &1000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Set quota to 500
+    bridge.set_withdrawal_quota(&500);
+    assert_eq!(bridge.get_withdrawal_quota(), 500);
+
+    // First withdrawal of 300 - should pass
+    bridge.withdraw(&admin, &user, &300, &token_addr);
+    
+    // Second withdrawal of 201 - should fail (total 501 > 500)
+    let result = bridge.try_withdraw(&admin, &user, &201, &token_addr);
+    assert_eq!(result, Err(Ok(Error::WithdrawalQuotaExceeded)));
+
+    // Second withdrawal of 200 - should pass (total 500 == 500)
+    bridge.withdraw(&admin, &user, &200, &token_addr);
+
+    // Third withdrawal of 1 - should fail
+    let result = bridge.try_withdraw(&admin, &user, &1, &token_addr);
+    assert_eq!(result, Err(Ok(Error::WithdrawalQuotaExceeded)));
+}
+
+#[test]
+fn test_withdrawal_quota_invariant_window_reset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, admin, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &5_000);
+
+    bridge.deposit(&user, &1000, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Set quota to 500
+    bridge.set_withdrawal_quota(&500);
+
+    // Withdraw 500
+    bridge.withdraw(&admin, &user, &500, &token_addr);
+
+    let start_ledger = env.ledger().sequence();
+    // Advancement of time (WINDOW_LEDGERS)
+    env.ledger().with_mut(|li| {
+        li.sequence_number = start_ledger + WINDOW_LEDGERS;
+    });
+
+    // Should be able to withdraw again
+    bridge.withdraw(&admin, &user, &500, &token_addr);
+    
+    // Check that quota record reset
+    let daily_amount = bridge.get_user_daily_withdrawal(&user);
+    assert_eq!(daily_amount, 500);
 }
