@@ -9,13 +9,17 @@
 extern crate std;
 
 use super::*;
-use soroban_sdk::{
-    testutils::Address as _,
-    token::StellarAssetClient,
-    vec, Address, Bytes, Env,
-};
+use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, vec, Address, Bytes, Env};
 
-fn setup_bridge<'a>(env: &Env) -> (Address, FiatBridgeClient<'a>, Address, Address, StellarAssetClient<'a>) {
+fn setup_bridge<'a>(
+    env: &Env,
+) -> (
+    Address,
+    FiatBridgeClient<'a>,
+    Address,
+    Address,
+    StellarAssetClient<'a>,
+) {
     let admin = Address::generate(env);
     let token_admin = Address::generate(env);
     let token_addr = env
@@ -128,8 +132,7 @@ fn receipt_not_found_when_persistent_entry_missing() {
     let user = Address::generate(&env);
     token_sac.mint(&user, &10_000);
 
-    let receipt_hash =
-        bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
+    let receipt_hash = bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
 
     // Drop the persistent Receipt entry, leave the index pointing to it.
     env.as_contract(&contract_id, || {

@@ -1,4 +1,4 @@
-﻿#![no_std]
+#![no_std]
 #![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, xdr::ToXdr, Address,
@@ -412,6 +412,8 @@ pub struct DepositEvent {
     pub from: Address,
     pub token: Address,
     pub amount: i128,
+    /// Receipt ID issued for this deposit, linking deposit and receipt events.
+    pub receipt_id: BytesN<32>,
 }
 
 #[contractevent]
@@ -1170,6 +1172,7 @@ impl FiatBridge {
             from: from.clone(),
             token: token.clone(),
             amount,
+            receipt_id: receipt_hash.clone(),
         }
         .publish(&env);
 
@@ -1351,9 +1354,13 @@ impl FiatBridge {
         admin.require_auth();
         Self::require_not_paused(&env)?;
 
-        if amount <= 0 {
-            return Err(Error::ZeroAmount);
-        }
+        require!(amount > 0, Error::ZeroAmount);
+
+        // ── Circuit breaker: reject withdrawal requests when tripped ─────
+        require!(
+            !Self::is_circuit_breaker_tripped(env.clone()),
+            Error::CircuitBreakerActive
+        );
 
         // ── Issue #687: edge case validation ─────────────────────────────
         // Validate token is whitelisted before proceeding
@@ -1855,23 +1862,24 @@ impl FiatBridge {
     /// [`Error::ExceedsLimitMaxCap`]. The cap applies to new or updated token
     /// limits only; existing per-token limits are not retroactively reduced.
     pub fn set_limit(env: Env, token: Address, limit: i128) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
         let admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
-        if Self::is_circuit_breaker_tripped(env.clone()) {
-            return Err(Error::CircuitBreakerActive);
-        }
+        require!(
+            !Self::is_circuit_breaker_tripped(env.clone()),
+            Error::CircuitBreakerActive
+        );
+        require!(limit > 0, Error::ZeroAmount);
         let max_cap: i128 = env
             .storage()
             .instance()
             .get(&DataKey::SetLimitMaxCap)
             .unwrap_or(i128::MAX);
-        if limit > max_cap {
-            return Err(Error::ExceedsLimitMaxCap);
-        }
+        require!(limit <= max_cap, Error::ExceedsLimitMaxCap);
         let mut config: TokenConfig = env
             .storage()
             .persistent()
@@ -3357,23 +3365,20 @@ impl FiatBridge {
             return Err(Error::ReceiptIndexOutOfBounds);
         }
 
-        let receipt_hash: BytesN<32> = match env
-            .storage()
-            .temporary()
-            .get(&DataKey::ReceiptIndex(idx))
-        {
-            Some(hash) => hash,
-            None => {
-                ReceiptQueryEvent {
-                    version: EVENT_VERSION,
-                    index: idx,
-                    receipt_hash: None,
-                    error_code: Some(Error::ReceiptNotFound as u32),
+        let receipt_hash: BytesN<32> =
+            match env.storage().temporary().get(&DataKey::ReceiptIndex(idx)) {
+                Some(hash) => hash,
+                None => {
+                    ReceiptQueryEvent {
+                        version: EVENT_VERSION,
+                        index: idx,
+                        receipt_hash: None,
+                        error_code: Some(Error::ReceiptNotFound as u32),
+                    }
+                    .publish(&env);
+                    return Err(Error::ReceiptNotFound);
                 }
-                .publish(&env);
-                return Err(Error::ReceiptNotFound);
-            }
-        };
+            };
 
         let receipt: Receipt = match env
             .storage()
@@ -4476,12 +4481,13 @@ impl FiatBridge {
             env.storage()
                 .instance()
                 .set(&DataKey::CircuitBreakerTripped, &false);
-            env.storage()
-                .instance()
-                .set(&DataKey::GlobalDailyWithdrawn, &GlobalDailyWithdrawn {
+            env.storage().instance().set(
+                &DataKey::GlobalDailyWithdrawn,
+                &GlobalDailyWithdrawn {
                     amount: 0,
                     window_start: curr,
-                });
+                },
+            );
             CircuitBreakerAutoResetEvent {
                 version: EVENT_VERSION,
                 tripped_at,
@@ -5133,3 +5139,6 @@ mod test_get_receipt_by_index;
 
 #[cfg(test)]
 mod test_pause_invariants;
+
+#[cfg(test)]
+mod test_set_limit;

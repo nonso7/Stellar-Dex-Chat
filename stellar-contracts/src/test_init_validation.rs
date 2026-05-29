@@ -22,11 +22,11 @@ fn test_reinitialization_blocked_after_renounce() {
 
     // Renounce admin
     bridge.queue_renounce_admin();
-    
+
     // Advance ledger to satisfy MIN_TIMELOCK_DELAY (34560 ledgers)
     let current_ledger = env.ledger().sequence();
     env.ledger().set_sequence_number(current_ledger + 34560 + 1);
-    
+
     bridge.execute_renounce_admin();
 
     // Verify admin is removed
@@ -37,7 +37,7 @@ fn test_reinitialization_blocked_after_renounce() {
     // even though the Admin key is gone, because SchemaVersion remains.
     let new_admin = Address::generate(&env);
     let result = bridge.try_init(&new_admin, &token, &1_000_000, &1, &signers, &1);
-    
+
     assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 }
 
@@ -54,7 +54,7 @@ fn test_init_rejects_contract_as_admin() {
 
     // Attempt to set contract itself as admin
     let result = bridge.try_init(&contract_id, &token, &1_000_000, &1, &signers, &1);
-    
+
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
 
@@ -68,7 +68,7 @@ fn test_init_rejects_too_many_signers() {
 
     let admin = Address::generate(&env);
     let token = Address::generate(&env);
-    
+
     // Create 21 signers (MAX_SIGNERS is 20)
     let mut signers = vec![&env];
     for _ in 0..21 {
@@ -76,7 +76,7 @@ fn test_init_rejects_too_many_signers() {
     }
 
     let result = bridge.try_init(&admin, &token, &1_000_000, &1, &signers, &1);
-    
+
     assert_eq!(result, Err(Ok(Error::MaxSignersReached)));
 }
 
@@ -94,7 +94,7 @@ fn test_init_rejects_empty_signers() {
 
     // threshold 1 but 0 signers
     let result = bridge.try_init(&admin, &token, &1_000_000, &1, &signers, &1);
-    
+
     assert_eq!(result, Err(Ok(Error::InvalidThreshold)));
 }
 
@@ -111,6 +111,6 @@ fn test_init_rejects_zero_threshold() {
     let signers = vec![&env, admin.clone()];
 
     let result = bridge.try_init(&admin, &token, &1_000_000, &1, &signers, &0);
-    
+
     assert_eq!(result, Err(Ok(Error::InvalidThreshold)));
 }
