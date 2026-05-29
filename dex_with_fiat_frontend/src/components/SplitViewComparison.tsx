@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { ArrowLeftRight, X, ChevronDown } from 'lucide-react';
+import { ArrowLeftRight, X, ChevronDown, Copy, Check } from 'lucide-react';
 import { ChatSession, ChatMessage } from '@/types';
 import { UseSplitViewReturn } from '@/hooks/useSplitView';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
@@ -23,6 +23,7 @@ interface ThreadPaneProps {
   allSessions: ChatSession[];
   onSelectSession: (id: string) => void;
   onSelectMessage: (id: string | null) => void;
+  onCopyMessage: (content: string) => void;
 }
 
 function ThreadPane({
@@ -32,10 +33,14 @@ function ThreadPane({
   allSessions,
   onSelectSession,
   onSelectMessage,
+  onCopyMessage,
 }: ThreadPaneProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const paneId = `split-pane-${label.toLowerCase()}-region`;
   const [mounted, setMounted] = React.useState(false);
+  const [copiedMessageId, setCopiedMessageId] = React.useState<string | null>(
+    null,
+  );
 
   React.useEffect(() => {
     setMounted(true);
@@ -44,7 +49,10 @@ function ThreadPane({
   const scrollToMessage = (id: string) => {
     const el = scrollRef.current?.querySelector(`[data-message-id="${id}"]`);
     if (el && typeof (el as HTMLElement).scrollIntoView === 'function') {
-      (el as HTMLElement).scrollIntoView({ block: 'center', behavior: 'smooth' });
+      (el as HTMLElement).scrollIntoView({
+        block: 'center',
+        behavior: 'smooth',
+      });
     }
   };
 
@@ -54,7 +62,18 @@ function ThreadPane({
     if (newId) scrollToMessage(newId);
   };
 
-  const formatTimestamp = (timestamp: number) => {
+  const handleCopyMessage = (
+    e: React.MouseEvent,
+    content: string,
+    messageId: string,
+  ) => {
+    e.stopPropagation();
+    onCopyMessage(content);
+    setCopiedMessageId(messageId);
+    setTimeout(() => setCopiedMessageId(null), 2000);
+  };
+
+  const formatTimestamp = (timestamp: number | Date) => {
     if (!mounted) return ''; // Avoid hydration mismatch by not rendering on server
     return new Date(timestamp).toLocaleString([], {
       month: 'short',
@@ -122,33 +141,64 @@ function ThreadPane({
             .map((msg) => {
               const isSelected = selectedMessageId === msg.id;
               const isUser = msg.role === 'user';
+              const isCopied = copiedMessageId === msg.id;
               return (
-                <button
+                <div
                   key={msg.id}
                   data-message-id={msg.id}
-                  onClick={() => handleMessageClick(msg)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-xs transition-all border ${
+                  className={`relative w-full text-left px-3 py-2 rounded-lg text-xs transition-all border group ${
                     isSelected
                       ? 'border-[var(--color-primary)] bg-[var(--color-primary-soft)] ring-1 ring-[var(--color-primary)]'
                       : 'border-[var(--color-border)] hover:border-[var(--color-text-muted)] hover:bg-[var(--color-surface-muted)]'
                   }`}
-                  aria-pressed={isSelected}
-                  aria-label={`${isUser ? 'User' : 'Assistant'} message`}
                 >
-                  <span
-                    className={`font-semibold ${
-                      isUser ? 'text-[var(--color-primary)]' : 'text-[var(--color-success)]'
-                    }`}
+                  <button
+                    onClick={() => handleMessageClick(msg)}
+                    className="w-full text-left"
+                    aria-pressed={isSelected}
+                    aria-label={`${isUser ? 'User' : 'Assistant'} message`}
                   >
-                    {isUser ? 'You' : 'Assistant'}
-                  </span>
-                  <p className="mt-1 line-clamp-3 leading-relaxed text-[var(--color-text-secondary)]">
-                    {msg.content}
-                  </p>
-                   <p className="mt-1 text-[10px] text-[var(--color-text-muted)]" data-testid="message-timestamp">
-                     {formatTimestamp(msg.timestamp)}
-                   </p>
-                </button>
+                    <span
+                      className={`font-semibold ${
+                        isUser
+                          ? 'text-[var(--color-primary)]'
+                          : 'text-[var(--color-success)]'
+                      }`}
+                    >
+                      {isUser ? 'You' : 'Assistant'}
+                    </span>
+                    <p className="mt-1 line-clamp-3 leading-relaxed text-[var(--color-text-secondary)]">
+                      {msg.content}
+                    </p>
+                    <p
+                      className="mt-1 text-[10px] text-[var(--color-text-muted)]"
+                      data-testid="message-timestamp"
+                    >
+                      {formatTimestamp(msg.timestamp)}
+                    </p>
+                  </button>
+
+                  {/* Copy button */}
+                  <button
+                    onClick={(e) => handleCopyMessage(e, msg.content, msg.id)}
+                    className="absolute top-2 right-2 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity bg-[var(--color-surface)] hover:bg-[var(--color-surface-elevated)] border border-[var(--color-border)]"
+                    aria-label="Copy message to clipboard"
+                    title="Copy message"
+                    data-testid="copy-message-btn"
+                  >
+                    {isCopied ? (
+                      <Check
+                        className="w-3 h-3 text-[var(--color-success)]"
+                        aria-hidden
+                      />
+                    ) : (
+                      <Copy
+                        className="w-3 h-3 text-[var(--color-text-muted)]"
+                        aria-hidden
+                      />
+                    )}
+                  </button>
+                </div>
               );
             })
         )}
@@ -165,32 +215,69 @@ export default function SplitViewComparison({
   splitView,
   sessions,
 }: SplitViewComparisonProps) {
-  const { state, close, setLeftSession, setRightSession, swapSessions, selectMessage, leftSession, rightSession } =
-    splitView;
+  const {
+    state,
+    close,
+    setLeftSession,
+    setRightSession,
+    swapSessions,
+    selectMessage,
+    leftSession,
+    rightSession,
+  } = splitView;
 
   const { isOnline, wasOffline, resetWasOffline } = useOnlineStatus();
   const { addToast } = useToast();
-  const wasOnlineRef = useRef(isOnline);
+  // Fix (#523): initialise the ref to `true` (assume online at mount) so the
+  // first offline transition is always detected correctly, regardless of the
+  // order in which React commits the initial render vs. the effect.
+  const wasOnlineRef = useRef(true);
+
+  const handleCopyMessage = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      addToast({
+        message: 'Message copied to clipboard',
+        severity: 'success',
+        durationMs: 2000,
+      });
+    } catch (error) {
+      addToast({
+        message: 'Failed to copy message',
+        severity: 'error',
+        durationMs: 3000,
+      });
+    }
+  };
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const wasOnline = wasOnlineRef.current;
-    if (wasOnline && !isOnline) {
+    // Capture the previous value before updating the ref so the comparison
+    // is always against the state from the *previous* render cycle.
+    // Updating the ref at the end of the effect (not the start) eliminates
+    // the race where a rapid online→offline→online sequence could read a
+    // stale ref value and skip one of the toasts.
+    const prevOnline = wasOnlineRef.current;
+
+    if (prevOnline && !isOnline) {
       addToast({
         message:
           "You're offline. Thread comparison won't update until you reconnect.",
         severity: 'warning',
         durationMs: 4500,
       });
-    } else if (!wasOnline && isOnline && wasOffline) {
+    } else if (!prevOnline && isOnline && wasOffline) {
       addToast({
-        message: 'Back online. Comparison panes will use the latest thread data.',
+        message:
+          'Back online. Comparison panes will use the latest thread data.',
         severity: 'success',
         durationMs: 3000,
       });
       resetWasOffline();
     }
+
+    // Update ref AFTER the conditional logic to avoid stale-closure issues.
     wasOnlineRef.current = isOnline;
   }, [isOnline, wasOffline, addToast, resetWasOffline]);
 
@@ -212,7 +299,10 @@ export default function SplitViewComparison({
         aria-label="Comparison actions"
         className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-muted)] flex-shrink-0"
       >
-        <h2 id={dialogTitleId} className="text-sm font-semibold text-[var(--color-text-primary)]">
+        <h2
+          id={dialogTitleId}
+          className="text-sm font-semibold text-[var(--color-text-primary)]"
+        >
           Compare Threads
         </h2>
 
@@ -249,7 +339,7 @@ export default function SplitViewComparison({
       </div>
 
       {/* Two panes */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-1 min-h-0 overflow-hidden flex-col md:flex-row">
         <ThreadPane
           session={leftSession}
           label="Left"
@@ -257,6 +347,7 @@ export default function SplitViewComparison({
           allSessions={sessions}
           onSelectSession={setLeftSession}
           onSelectMessage={selectMessage}
+          onCopyMessage={handleCopyMessage}
         />
         <ThreadPane
           session={rightSession}
@@ -265,6 +356,7 @@ export default function SplitViewComparison({
           allSessions={sessions}
           onSelectSession={setRightSession}
           onSelectMessage={selectMessage}
+          onCopyMessage={handleCopyMessage}
         />
       </div>
     </div>

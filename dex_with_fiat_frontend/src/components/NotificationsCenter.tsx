@@ -30,6 +30,27 @@ export default function NotificationsCenter() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      // Ignore shortcuts when focus is inside an input/textarea
+      const tag = (event.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+        return;
+      }
+      if (!isOpen) return;
+      if (event.key === 'm' || event.key === 'M') {
+        markAllAsRead();
+      } else if (event.key === 'd' || event.key === 'D') {
+        clearNotifications();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, markAllAsRead, clearNotifications]);
+
   const formatTime = (ts: number) => {
     const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
     const diff = (ts - Date.now()) / 1000;
@@ -45,19 +66,19 @@ export default function NotificationsCenter() {
   const getIconColor = (type: AppNotification['type']) => {
     switch (type) {
       case 'tx_submit':
-        return 'text-blue-500';
+        return 'text-[var(--color-primary)]';
       case 'tx_confirm':
-        return 'text-green-500';
+        return 'text-[var(--color-success)]';
       case 'payout_pending':
-        return 'text-yellow-500';
+        return 'text-[var(--color-warning)]';
       case 'payout_success':
-        return 'text-green-500';
+        return 'text-[var(--color-success)]';
       case 'payout_fail':
-        return 'text-red-500';
+        return 'text-[var(--color-danger)]';
       case 'risk_warning':
-        return 'text-amber-500';
+        return 'text-[var(--color-warning)]';
       default:
-        return 'text-gray-500';
+        return 'text-[var(--color-text-muted)]';
     }
   };
 
@@ -71,6 +92,8 @@ export default function NotificationsCenter() {
             : 'hover:bg-gray-100 text-gray-600'
         }`}
         aria-label="Notifications"
+        aria-expanded={isOpen}
+        aria-haspopup="true"
       >
         <Bell className="w-5 h-5" />
         {unreadCount > 0 && (

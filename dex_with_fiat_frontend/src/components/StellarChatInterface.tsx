@@ -61,7 +61,7 @@ type HealthStatus = 'checking' | 'ok' | 'degraded';
 
 const HEALTH_POLL_INTERVAL_MS = 60_000;
 
-export default function StellarChatInterface() {
+function StellarChatInterfaceContent() {
   const { t } = useTranslation();
   const {
     connection,
@@ -107,6 +107,9 @@ export default function StellarChatInterface() {
   >(null);
   const [isReceiptDrawerOpen, setIsReceiptDrawerOpen] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  // Show the chat skeleton until the client has hydrated so the first paint
+  // isn't an empty conversation pane before messages are restored.
+  const [isHydrated, setIsHydrated] = useState(false);
   const { entries: txHistory, clearEntries: clearTxHistory } = useTxHistory();
   const accountDropdownRef = useRef<HTMLDivElement>(null);
   const reconnectNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -149,6 +152,10 @@ export default function StellarChatInterface() {
     checkMobile();
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  useEffect(() => {
+    setIsHydrated(true);
   }, []);
 
   useEffect(() => {
@@ -430,7 +437,6 @@ export default function StellarChatInterface() {
     },
   }[healthStatus];
   // ───────────────────────────────────────────────────────────────────────────
-//fhj
   const withdrawalQueueTone =
     withdrawalQueueDepth === null
       ? isDarkMode
@@ -443,13 +449,7 @@ export default function StellarChatInterface() {
           : 'bg-red-500/15 text-red-400';
 
   return (
-    <ErrorBoundary
-      isDarkMode={isDarkMode}
-      title={t('common.error_boundary_title') || 'Interface Error'}
-      message={t('common.error_boundary_message') || 'The interface encountered an unexpected error.'}
-      onRetry={() => window.location.reload()}
-    >
-      <div className="theme-app flex h-screen w-screen overflow-hidden transition-colors duration-300">
+    <div className="theme-app flex h-screen w-screen overflow-hidden transition-colors duration-300">
         {/* Desktop sidebar - only rendered on lg+ viewports or when toggled */}
         {!isMobile && (
           <div
@@ -484,11 +484,11 @@ export default function StellarChatInterface() {
               </button>
 
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
                   <Star className="w-4 h-4 text-white" />
                 </div>
                 <div>
-                  <h1 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                  <h1 className="text-xl font-bold text-[var(--color-primary)]">
                     {t('header.title')}
                   </h1>
                   <p
@@ -666,7 +666,7 @@ export default function StellarChatInterface() {
               ) : (
                 <button
                   onClick={connect}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium rounded-lg transition-all"
+                  className="flex items-center gap-2 px-4 py-2 bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)] text-white text-sm font-medium rounded-lg transition-all"
                 >
                   <Wallet className="w-4 h-4" />
                   {t('header.connect_freighter')}
@@ -860,7 +860,7 @@ export default function StellarChatInterface() {
 
           {/* Messages */}
           <div className="flex-1 min-h-0 flex flex-col">
-            {isLoading && messages.length === 0 ? (
+            {!isHydrated || (isLoading && messages.length === 0) ? (
               <SkeletonChat />
             ) : (
               <ErrorBoundary
@@ -1028,6 +1028,21 @@ export default function StellarChatInterface() {
           </div>
         )}
       </div>
+  );
+}
+
+/** Top-level error boundary: wraps the full interface tree so render errors are contained. */
+export default function StellarChatInterface() {
+  const { isDarkMode } = useTheme();
+  const { t } = useTranslation();
+  return (
+    <ErrorBoundary
+      isDarkMode={isDarkMode}
+      title={t('common.error_boundary_title') || 'Interface Error'}
+      message={t('common.error_boundary_message') || 'The interface encountered an unexpected error.'}
+      onRetry={() => window.location.reload()}
+    >
+      <StellarChatInterfaceContent />
     </ErrorBoundary>
   );
 }

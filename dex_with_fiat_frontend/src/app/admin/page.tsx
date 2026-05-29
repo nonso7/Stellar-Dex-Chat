@@ -12,7 +12,10 @@ import { useFeatureFlag } from '@/hooks/useFeatureFlag';
 import AuditTable from '@/components/AuditTable';
 import useBridgeStats from '@/hooks/useBridgeStats';
 import AdminGuard from '@/components/AdminGuard';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { stroopsToDisplay } from '@/lib/stellarContract';
+import SkeletonHeader from '@/components/ui/skeleton/SkeletonHeader';
+import SkeletonPayout from '@/components/ui/skeleton/SkeletonPayout';
 import {
   AreaChart,
   Area,
@@ -105,6 +108,28 @@ function useChartColors() {
   return colors;
 }
 
+function AdminErrorFallback() {
+  return (
+    <div className="min-h-screen theme-app flex items-center justify-center p-8">
+      <div className="text-center max-w-md">
+        <h2 className="text-2xl font-bold theme-text-primary mb-3">
+          Failed to load dashboard
+        </h2>
+        <p className="theme-text-muted mb-6">
+          Something went wrong while loading the admin dashboard. Please try again.
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="theme-primary-button px-6 py-2 rounded-md"
+        >
+          Retry
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const [reconciliationRecords, setReconciliationRecords] = useState<
     ReconciliationRecord[]
@@ -121,6 +146,9 @@ export default function AdminDashboard() {
   const [auditTotal, setAuditTotal] = useState(0);
   const [auditTotalPages, setAuditTotalPages] = useState(1);
   const [exportingCsv, setExportingCsv] = useState(false);
+  const [optimisticPage, setOptimisticPage] = useState<number | null>(null);
+  const [optimisticFilter, setOptimisticFilter] = useState<string | null>(null);
+  const [optimisticExportSuccess, setOptimisticExportSuccess] = useState(false);
   const enableAdminReconciliation = useFeatureFlag('enableAdminReconciliation');
   const chartColors = useChartColors();
 
@@ -136,9 +164,15 @@ export default function AdminDashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const fetchAuditLogs = useCallback(async (page: number, action: string) => {
+  const fetchAuditLogs = useCallback(async (page: number, action: string, isOptimistic: boolean = false) => {
     setAuditLoading(true);
     setAuditError(null);
+
+    // Store optimistic state for rollback on error
+    if (isOptimistic) {
+      setOptimisticPage(page);
+      setOptimisticFilter(action);
+    }
 
     try {
       const params = new URLSearchParams({
@@ -161,6 +195,11 @@ export default function AdminDashboard() {
       setAuditTotal(payload.total);
       setAuditTotalPages(payload.totalPages);
     } catch (error) {
+      // Rollback optimistic state on error
+      if (isOptimistic) {
+        setOptimisticPage(null);
+        setOptimisticFilter(null);
+      }
       setAuditError(
         error instanceof Error
           ? error.message
@@ -168,6 +207,10 @@ export default function AdminDashboard() {
       );
     } finally {
       setAuditLoading(false);
+      if (isOptimistic) {
+        setOptimisticPage(null);
+        setOptimisticFilter(null);
+      }
     }
   }, []);
 
@@ -194,6 +237,8 @@ export default function AdminDashboard() {
   const exportAuditToCSV = async () => {
     try {
       setExportingCsv(true);
+      // Optimistic UI: show success state immediately
+      setOptimisticExportSuccess(true);
       const allEntries: AdminAuditLogEntry[] = [];
 
       for (let page = 1; page <= auditTotalPages; page += 1) {
@@ -244,6 +289,8 @@ export default function AdminDashboard() {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (error) {
+      // Rollback optimistic state on error
+      setOptimisticExportSuccess(false);
       setAuditError(
         error instanceof Error
           ? error.message
@@ -251,7 +298,24 @@ export default function AdminDashboard() {
       );
     } finally {
       setExportingCsv(false);
+      // Clear optimistic state after a short delay to show success
+      if (optimisticExportSuccess) {
+        setTimeout(() => setOptimisticExportSuccess(false), 2000);
+      }
     }
+  };
+
+  const handlePageChange = (newPage: number) => {
+    // Optimistic UI: update page immediately
+    setAuditPage(newPage);
+    fetchAuditLogs(newPage, actionFilter, true);
+  };
+
+  const handleFilterChange = (newFilter: string) => {
+    // Optimistic UI: update filter and reset to page 1 immediately
+    setActionFilter(newFilter);
+    setAuditPage(1);
+    fetchAuditLogs(1, newFilter, true);
   };
 
   const totalVolume = metrics.reduce((acc, curr) => acc + curr.volume, 0);
@@ -262,11 +326,13 @@ export default function AdminDashboard() {
   if (loadingMetrics) {
     return (
       <div className="min-h-screen theme-app p-8">
-        <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold theme-text-primary mb-8">
-            Admin Dashboard
-          </h1>
-          <div className="text-center theme-text-muted">Loading metrics...</div>
+        <div className="max-w-7xl mx-auto space-y-6">
+          <SkeletonHeader />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <SkeletonPayout />
+            <SkeletonPayout />
+            <SkeletonPayout />
+          </div>
         </div>
       </div>
     );
@@ -274,6 +340,7 @@ export default function AdminDashboard() {
 
   return (
     <AdminGuard>
+      <ErrorBoundary fallback={<AdminErrorFallback />}>
       <div className="min-h-screen theme-app p-8">
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-8">
@@ -479,12 +546,12 @@ export default function AdminDashboard() {
                     </label>
                     <select
                       id="audit-action-filter"
-                      value={actionFilter}
+                      value={optimisticFilter ?? actionFilter}
                       onChange={(event) => {
-                        setActionFilter(event.target.value);
-                        setAuditPage(1);
+                        handleFilterChange(event.target.value);
                       }}
                       className="w-full sm:w-64 px-3 py-2 rounded-md text-sm theme-input theme-border border"
+                      disabled={auditLoading}
                     >
                       <option value="all">All Actions</option>
                       {auditActions.map((action) => (
@@ -501,13 +568,17 @@ export default function AdminDashboard() {
                     disabled={exportingCsv || auditLoading || auditTotal === 0}
                     className="h-10 mt-0 sm:mt-5 px-4 py-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
-                      backgroundColor: 'var(--color-success)',
+                      backgroundColor: optimisticExportSuccess
+                        ? 'var(--color-success)'
+                        : exportingCsv
+                          ? 'var(--color-warning)'
+                          : 'var(--color-success)',
                       color: '#fff',
                     }}
-                    aria-label={exportingCsv ? 'Exporting audit log to CSV file' : 'Export audit log to CSV file'}
+                    aria-label={optimisticExportSuccess ? 'Export successful' : exportingCsv ? 'Exporting audit log to CSV file' : 'Export audit log to CSV file'}
                     aria-describedby="audit-action-filter"
                   >
-                    {exportingCsv ? 'Exporting...' : 'Export CSV'}
+                    {optimisticExportSuccess ? 'Exported!' : exportingCsv ? 'Exporting...' : 'Export CSV'}
                   </button>
                 </div>
               </div>
@@ -602,36 +673,34 @@ export default function AdminDashboard() {
             <div className="px-6 py-4 theme-border border-t flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <p className="text-sm theme-text-secondary">
                 Showing{' '}
-                {(auditPage - 1) * auditPageSize +
+                {((optimisticPage ?? auditPage) - 1) * auditPageSize +
                   (auditEntries.length ? 1 : 0)}
-                -{(auditPage - 1) * auditPageSize + auditEntries.length} of{' '}
+                -{((optimisticPage ?? auditPage) - 1) * auditPageSize + auditEntries.length} of{' '}
                 {auditTotal}
               </p>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() =>
-                    setAuditPage((previous) => Math.max(previous - 1, 1))
+                    handlePageChange(Math.max((optimisticPage ?? auditPage) - 1, 1))
                   }
-                  disabled={auditPage <= 1 || auditLoading}
+                  disabled={(optimisticPage ?? auditPage) <= 1 || auditLoading}
                   className="px-3 py-2 text-sm theme-border border rounded-md theme-text-primary theme-surface-muted hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
-                  aria-label={`Go to previous page. Current page is ${auditPage} of ${auditTotalPages}`}
+                  aria-label={`Go to previous page. Current page is ${optimisticPage ?? auditPage} of ${auditTotalPages}`}
                 >
                   Previous
                 </button>
                 <span className="text-sm theme-text-secondary" aria-live="polite" aria-atomic="true">
-                  Page {auditPage} of {auditTotalPages}
+                  Page {optimisticPage ?? auditPage} of {auditTotalPages}
                 </span>
                 <button
                   type="button"
                   onClick={() =>
-                    setAuditPage((previous) =>
-                      Math.min(previous + 1, auditTotalPages),
-                    )
+                    handlePageChange(Math.min((optimisticPage ?? auditPage) + 1, auditTotalPages))
                   }
-                  disabled={auditPage >= auditTotalPages || auditLoading}
+                  disabled={(optimisticPage ?? auditPage) >= auditTotalPages || auditLoading}
                   className="px-3 py-2 text-sm theme-border border rounded-md theme-text-primary theme-surface-muted hover:opacity-80 disabled:opacity-50 disabled:cursor-not-allowed"
-                  aria-label={`Go to next page. Current page is ${auditPage} of ${auditTotalPages}`}
+                  aria-label={`Go to next page. Current page is ${optimisticPage ?? auditPage} of ${auditTotalPages}`}
                 >
                   Next
                 </button>
@@ -648,6 +717,7 @@ export default function AdminDashboard() {
           </div>
         </div>
       </div>
+      </ErrorBoundary>
     </AdminGuard>
   );
 }

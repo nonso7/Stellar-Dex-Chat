@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { KEYBOARD_SHORTCUTS, useBeneficiaries } from './useBeneficiaries';
+import { useBeneficiaries } from './useBeneficiaries';
 
 // Mock localStorage
 const localStorageMock = {
@@ -21,8 +21,7 @@ describe('useBeneficiaries', () => {
   });
 
   afterEach(() => {
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
+    // No timer cleanup needed for this hook
   });
 
   it('loads beneficiaries from localStorage on mount', () => {
@@ -69,13 +68,15 @@ describe('useBeneficiaries', () => {
   it('provides keyboard shortcuts metadata', () => {
     const { result } = renderHook(() => useBeneficiaries());
 
-    expect(result.current.keyboardShortcuts).toEqual(KEYBOARD_SHORTCUTS);
-    expect(KEYBOARD_SHORTCUTS.ADD_BENEFICIARY).toBe('Ctrl+B');
-    expect(KEYBOARD_SHORTCUTS.FOCUS_BENEFICIARIES).toBe('Ctrl+Shift+B');
-    expect(KEYBOARD_SHORTCUTS.NAVIGATE_UP).toBe('ArrowUp');
-    expect(KEYBOARD_SHORTCUTS.NAVIGATE_DOWN).toBe('ArrowDown');
-    expect(KEYBOARD_SHORTCUTS.SELECT_BENEFICIARY).toBe('Enter');
-    expect(KEYBOARD_SHORTCUTS.DELETE_BENEFICIARY).toBe('Delete');
+    expect(result.current).toHaveProperty('keyboardShortcuts');
+    expect(result.current.keyboardShortcuts).toEqual({
+      ADD_BENEFICIARY: 'Ctrl+B',
+      FOCUS_BENEFICIARIES: 'Ctrl+Shift+B',
+      NAVIGATE_UP: 'ArrowUp',
+      NAVIGATE_DOWN: 'ArrowDown',
+      SELECT_BENEFICIARY: 'Enter',
+      DELETE_BENEFICIARY: 'Delete',
+    });
   });
 
   it('handles keyboard shortcuts for navigation and selection', () => {
@@ -95,7 +96,6 @@ describe('useBeneficiaries', () => {
 
     // Navigate down
     act(() => {
-      const mockEvent = new KeyboardEvent('keydown', { key: 'ArrowDown' });
       // Simulate the keyboard handler - in real usage this would be called via event listener
       // For testing, we can call the internal handler or test the selection change
     });
@@ -130,5 +130,30 @@ describe('useBeneficiaries', () => {
     });
 
     expect(result.current.beneficiaries).toHaveLength(0);
+  });
+
+  it('prevents hydration mismatch by only loading from localStorage after mount', () => {
+    // In a real Next.js app, the initial render would have empty beneficiaries
+    // and isLoaded false, then useEffect would run and load from localStorage
+    // In tests, useEffect runs synchronously, so we test the final state
+    const mockBeneficiaries = [
+      {
+        id: '1',
+        name: 'Test Beneficiary',
+        bankId: 1,
+        bankName: 'Test Bank',
+        bankCode: 'TB',
+        accountNumber: '123456789',
+        accountName: 'Test Account',
+        createdAt: Date.now(),
+      },
+    ];
+    localStorageMock.getItem.mockReturnValue(JSON.stringify(mockBeneficiaries));
+
+    const { result } = renderHook(() => useBeneficiaries());
+
+    // After effects run, it should have loaded from localStorage
+    expect(result.current.beneficiaries).toEqual(mockBeneficiaries);
+    expect(result.current.isLoaded).toBe(true);
   });
 });
