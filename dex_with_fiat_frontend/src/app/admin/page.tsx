@@ -358,8 +358,8 @@ export default function AdminDashboard() {
 
   return (
     <AdminGuard>
-      <ErrorBoundary fallback={<AdminErrorFallback />}>
       <div className="min-h-screen theme-app p-8">
+      <ErrorBoundary fallback={<AdminErrorFallback />}>
         <div className="max-w-7xl mx-auto">
           <div className="flex justify-between items-center mb-8">
             <h1 className="text-3xl font-bold theme-text-primary">
@@ -734,8 +734,8 @@ export default function AdminDashboard() {
             <AuditTable />
           </div>
         </div>
-      </div>
       </ErrorBoundary>
+      </div>
     </AdminGuard>
   );
 }

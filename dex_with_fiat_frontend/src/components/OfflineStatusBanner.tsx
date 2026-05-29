@@ -51,32 +51,19 @@ export default function OfflineStatusBanner() {
       aria-live="polite"
       aria-atomic="true"
       aria-label="Offline status"
-      className="fixed top-0 left-0 right-0 z-50 border-b-2 shadow-md"
-      style={{
-        background: 'var(--color-danger-soft)',
-        borderColor: 'var(--color-danger)',
-      }}
+      className="fixed top-0 left-0 right-0 z-50 border-b-2 shadow-md bg-red-700 border-red-900"
     >
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center gap-3">
         <div className="shrink-0" aria-hidden="true">
-          <WifiOff
-            className="w-5 h-5 animate-pulse"
-            style={{ color: 'var(--color-danger)' }}
-          />
+          <WifiOff className="w-5 h-5 animate-pulse text-white" />
         </div>
         <div className="flex-1">
-          <p
-            className="text-sm font-semibold"
-            style={{ color: 'var(--color-danger)' }}
-          >
+          <p className="text-sm font-semibold text-white">
             You are offline. Messages will be sent when you reconnect.
           </p>
         </div>
         <div className="shrink-0" aria-hidden="true">
-          <AlertTriangle
-            className="w-5 h-5"
-            style={{ color: 'var(--color-danger)' }}
-          />
+          <AlertTriangle className="w-5 h-5 text-white" />
         </div>
       </div>
     </div>
