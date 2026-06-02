@@ -774,6 +774,104 @@ fn test_operator_cap_recovers_after_deactivation() {
 }
 
 #[test]
+fn test_set_max_operators_boundary_check_rejects_reduction_below_current_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1_000);
+
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+    let op3 = Address::generate(&env);
+
+    // Set max to 3 and add 3 operators
+    bridge.set_max_operators(&3);
+    bridge.set_operator(&op1, &true);
+    bridge.set_operator(&op2, &true);
+    bridge.set_operator(&op3, &true);
+
+    assert!(bridge.is_operator(&op1));
+    assert!(bridge.is_operator(&op2));
+    assert!(bridge.is_operator(&op3));
+
+    // Attempt to reduce max below current count (3) should fail
+    let result = bridge.try_set_max_operators(&2);
+    assert_eq!(result, Err(Ok(Error::ExceedsLimit)));
+
+    // Max should remain unchanged
+    assert!(bridge.is_operator(&op1));
+    assert!(bridge.is_operator(&op2));
+    assert!(bridge.is_operator(&op3));
+}
+
+#[test]
+fn test_set_max_operators_allows_increase_above_current_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1_000);
+
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+
+    // Set max to 2 and add 2 operators
+    bridge.set_max_operators(&2);
+    bridge.set_operator(&op1, &true);
+    bridge.set_operator(&op2, &true);
+
+    // Increasing max should succeed
+    bridge.set_max_operators(&5);
+
+    // Both operators should still be active
+    assert!(bridge.is_operator(&op1));
+    assert!(bridge.is_operator(&op2));
+}
+
+#[test]
+fn test_set_max_operators_allows_exact_match_with_current_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1_000);
+
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+
+    // Set max to 2 and add 2 operators
+    bridge.set_max_operators(&2);
+    bridge.set_operator(&op1, &true);
+    bridge.set_operator(&op2, &true);
+
+    // Setting max to exact current count should succeed
+    bridge.set_max_operators(&2);
+
+    // Both operators should remain active
+    assert!(bridge.is_operator(&op1));
+    assert!(bridge.is_operator(&op2));
+}
+
+#[test]
+fn test_set_max_operators_zero_remains_unlimited() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 1_000);
+
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+    let op3 = Address::generate(&env);
+
+    // Set max to 0 (unlimited) with multiple operators should always work
+    bridge.set_max_operators(&0);
+    bridge.set_operator(&op1, &true);
+    bridge.set_operator(&op2, &true);
+    bridge.set_operator(&op3, &true);
+
+    // Setting max to 0 again should always succeed (unlimited is always valid)
+    bridge.set_max_operators(&0);
+
+    assert!(bridge.is_operator(&op1));
+    assert!(bridge.is_operator(&op2));
+    assert!(bridge.is_operator(&op3));
+}
+
+#[test]
 fn test_prune_inactive_operators_keeps_active_operator() {
     let env = Env::default();
     env.mock_all_auths();

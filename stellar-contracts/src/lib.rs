@@ -2849,6 +2849,42 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Sets the maximum number of operators allowed to be active simultaneously.
+    ///
+    /// # Purpose
+    /// Configures the operator count cap. A value of 0 means unlimited operators.
+    /// Values > 0 enforce a hard limit on concurrent operator registrations.
+    ///
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `max_operators`: The new maximum operator count (0 for unlimited)
+    ///
+    /// # Returns
+    /// `Ok(())` on successful update
+    /// `Err(Error::NotInitialized)` if contract admin not set
+    /// `Err(Error::ExceedsLimit)` if max_operators < current active operator count
+    ///
+    /// # Access Control
+    /// Only the contract admin (verified via `require_auth()`) may call this function.
+    ///
+    /// # Validation
+    /// - Contract must be initialized (admin exists)
+    /// - If setting a non-zero limit (max_operators > 0), must be >= current operator count
+    ///   to avoid violating the cap invariant
+    ///
+    /// # Errors
+    /// - `NotInitialized`: Admin not set (contract not initialized)
+    /// - `ExceedsLimit`: Attempting to reduce max below current operator count
+    ///
+    /// # Side Effects
+    /// - Updates persistent storage with new max operators value
+    /// - Does not affect currently registered operators
+    ///
+    /// # Example
+    /// ```ignore
+    /// contract.set_max_operators(env, 10)?;  // Allow up to 10 operators
+    /// contract.set_max_operators(env, 0)?;   // Allow unlimited operators
+    /// ```
     pub fn set_max_operators(env: Env, max_operators: u32) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -2856,6 +2892,19 @@ impl FiatBridge {
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
+
+        // Boundary check: if setting a non-zero limit, ensure it doesn't violate
+        // the cap by being less than the current operator count
+        if max_operators > 0 {
+            let operators = Self::get_operator_list(&env);
+            #[allow(clippy::unnecessary_cast)]
+            let current_count = operators.len() as u32;
+            require!(
+                current_count <= max_operators,
+                Error::ExceedsLimit
+            );
+        }
+
         env.storage()
             .instance()
             .set(&DataKey::MaxOperators, &max_operators);
@@ -3447,6 +3496,32 @@ impl FiatBridge {
 
     /// Returns the persisted fee-vault balance for `token`, reconciled against
     /// the contract's on-chain token balance so the ledger never exceeds reserves.
+    /// Reconciles the on-chain fee vault ledger balance against the actual token contract balance.
+    ///
+    /// # Purpose
+    /// Maintains consistency between the contract's internal accounting (persistent storage)
+    /// and the actual token balance held by the contract. If the ledger records more fees
+    /// than are actually held (e.g., due to token transfers or external liquidations),
+    /// this function corrects the ledger down to the actual balance and emits a
+    /// reconciliation event for audit purposes.
+    ///
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `token`: The token address to reconcile
+    ///
+    /// # Returns
+    /// The authoritative fee vault balance after reconciliation:
+    /// - If `vault_balance <= 0`, returns `0` (no fees recorded)
+    /// - If `vault_balance <= contract_balance`, returns `vault_balance` (ledger accurate)
+    /// - If `vault_balance > contract_balance`, corrects ledger and returns `contract_balance`
+    ///
+    /// # Side Effects
+    /// - Corrects persistent storage if ledger exceeds actual balance
+    /// - Emits [`FeeVaultReconciledEvent`] when a correction occurs
+    ///
+    /// # Example
+    /// Called before fee withdrawals and batch sweeps to ensure the contract does not
+    /// attempt to send more tokens than physically held.
     fn reconcile_fee_vault(env: &Env, token: &Address) -> i128 {
         let key = DataKey::FeeVault(token.clone());
         let vault_balance: i128 = env.storage().persistent().get(&key).unwrap_or(0);
@@ -3473,8 +3548,35 @@ impl FiatBridge {
         contract_balance
     }
 
-    /// Debits `amount` from an already-reconciled fee vault and returns the remainder.
-    /// Callers must invoke [`Self::reconcile_fee_vault`] before transferring tokens.
+    /// Deducts a specific amount from the fee vault ledger and updates persistent storage.
+    ///
+    /// # Purpose
+    /// Atomically reduces the recorded fee vault balance by the withdrawn amount.
+    /// This is a ledger-only operation that does not interact with the token contract.
+    /// The actual token transfer must be performed by the caller.
+    ///
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `token`: The token address whose vault is being debited
+    /// - `vault_balance`: The current vault balance (typically from [`Self::reconcile_fee_vault`])
+    /// - `amount`: The amount to deduct (must be > 0 and <= vault_balance)
+    ///
+    /// # Returns
+    /// `Ok(remaining)`: The new vault balance after deduction
+    /// `Err(error)`: If vault is empty, amount exceeds balance, or overflow occurs
+    ///
+    /// # Errors
+    /// - [`Error::NoFeesToWithdraw`]: Vault balance is zero
+    /// - [`Error::FeeWithdrawalExceedsBalance`]: Requested amount > vault balance
+    /// - [`Error::Overflow`]: Subtraction would overflow (should not occur in normal flow)
+    ///
+    /// # Preconditions
+    /// **CRITICAL**: Callers MUST invoke [`Self::reconcile_fee_vault`] before calling this function.
+    /// This ensures the ledger reflects actual on-chain balance and prevents over-withdrawals.
+    ///
+    /// # Example
+    /// Used internally by [`Self::withdraw_fees`] and [`Self::withdraw_fees_batch`] after
+    /// reconciliation and token transfer to finalize the ledger state.
     fn deduct_fee_vault_ledger(
         env: &Env,
         token: &Address,
@@ -3491,6 +3593,40 @@ impl FiatBridge {
         Ok(remaining)
     }
 
+    /// Records fees accrued for a specific token in the fee vault.
+    ///
+    /// # Purpose
+    /// Adds a positive amount to the contract's internal fee vault for the given token.
+    /// This operation is typically called during swap execution to accumulate protocol fees.
+    /// The fees are held in the contract's token balance and tracked in persistent storage.
+    ///
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `token`: The token address for which fees are being accrued
+    /// - `amount`: The fee amount to add (must be > 0)
+    ///
+    /// # Returns
+    /// `Ok(())` on successful accrual
+    /// `Err(Error::NotInitialized)` if contract has not been initialized
+    /// `Err(Error::ZeroAmount)` if amount <= 0
+    ///
+    /// # Access Control
+    /// Only the contract admin (verified via `require_auth()`) may call this function.
+    ///
+    /// # Side Effects
+    /// - Increments the fee vault balance in persistent storage
+    /// - Emits [`FeeAccruedEvent`] with token, amount, and current version
+    ///
+    /// # Notes
+    /// - Does not modify token balances; assumes tokens are already held by the contract
+    /// - Does not emit events on zero-amount rejections (fails before event emission)
+    /// - Safe for repeated calls; ledger balance is strictly increasing
+    ///
+    /// # Example
+    /// ```ignore
+    /// // During a swap: transfer fee tokens to contract, then accrue
+    /// contract.accrue_fee(env, token_address, 100)?;
+    /// ```
     pub fn accrue_fee(env: Env, token: Address, amount: i128) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -3529,6 +3665,29 @@ impl FiatBridge {
         Ok(())
     }
 
+    /// Returns the current accrued fee balance for a specific token.
+    ///
+    /// # Purpose
+    /// Provides a read-only view of the accumulated fees held in the contract for the
+    /// given token. This is useful for dashboards, audits, and fee withdrawal planning.
+    ///
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `token`: The token address to query
+    ///
+    /// # Returns
+    /// The current fee vault balance for the token, or `0` if no fees are recorded.
+    ///
+    /// # Notes
+    /// - This is a read-only operation with no side effects
+    /// - Does not perform reconciliation; reflects the ledger state
+    /// - For accurate withdrawal amounts, use [`Self::reconcile_fee_vault`] first
+    ///
+    /// # Example
+    /// ```ignore
+    /// let accumulated_fees = contract.get_accrued_fees(env, usdc_address);
+    /// println!("Outstanding fees: {}", accumulated_fees);
+    /// ```
     pub fn get_accrued_fees(env: Env, token: Address) -> i128 {
         env.storage()
             .persistent()
@@ -3536,6 +3695,29 @@ impl FiatBridge {
             .unwrap_or(0)
     }
 
+    /// Returns the current withdrawal nonce for an admin address.
+    ///
+    /// # Purpose
+    /// Provides the expected nonce value for the next [`Self::withdraw_fees`] call.
+    /// Nonces prevent replay attacks by ensuring each withdrawal transaction is unique.
+    ///
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `admin`: The admin address to query
+    ///
+    /// # Returns
+    /// The current nonce value (starts at `0` for new admins, incremented on each withdrawal).
+    ///
+    /// # Security Notes
+    /// - Nonces are per-admin and never reset
+    /// - Batch withdrawals via [`Self::withdraw_fees_batch`] do NOT consume nonces
+    /// - A transaction with the wrong nonce will fail with [`Error::InvalidNonce`] or [`Error::StaleNonce`]
+    ///
+    /// # Example
+    /// ```ignore
+    /// let next_nonce = contract.get_fee_withdrawal_nonce(env, admin_address);
+    /// contract.withdraw_fees(env, recipient, token, amount, next_nonce)?;
+    /// ```
     pub fn get_fee_withdrawal_nonce(env: Env, admin: Address) -> u64 {
         env.storage()
             .persistent()
@@ -3543,16 +3725,55 @@ impl FiatBridge {
             .unwrap_or(0)
     }
 
-    /// Withdraw a specific `amount` of accrued fees for `token` to the `to` address.
+    /// Withdraws a specific amount of accrued fees for a token to a recipient address.
     ///
-    /// # Security
-    /// Only the stored admin may call this function. The `nonce` parameter
-    /// provides replay protection — it must equal the current per-admin nonce
-    /// stored in persistent storage and is atomically incremented on success.
+    /// # Purpose
+    /// Allows the contract admin to extract accumulated protocol fees and transfer them
+    /// to a specified recipient. The withdrawal is subject to replay protection and
+    /// reconciliation checks to prevent double-spending.
     ///
-    /// # Event
-    /// Emits [`FeeWithdrawnEvent`] carrying the full withdrawal schema:
-    /// admin, recipient, token, amount, nonce consumed, and remaining vault balance.
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `to`: The recipient address that will receive the tokens
+    /// - `token`: The token address to withdraw fees for
+    /// - `amount`: The exact amount to withdraw (must be > 0)
+    /// - `nonce`: The expected replay-protection nonce (obtained via [`Self::get_fee_withdrawal_nonce`])
+    ///
+    /// # Returns
+    /// `Ok(())` on successful withdrawal
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`]: Contract admin not set
+    /// - [`Error::ZeroAmount`]: amount <= 0
+    /// - [`Error::StaleNonce`]: nonce < current nonce (stale or replayed request)
+    /// - [`Error::InvalidNonce`]: nonce > current nonce (premature or incorrect nonce)
+    /// - [`Error::NoFeesToWithdraw`]: No fees recorded for this token
+    /// - [`Error::FeeWithdrawalExceedsBalance`]: Requested amount exceeds accrued fees
+    /// - [`Error::InsufficientFunds`]: Contract balance < requested amount (reconciliation mismatch)
+    /// - [`Error::Overflow`]: Nonce overflow (effectively impossible at u64)
+    ///
+    /// # Access Control
+    /// Only the contract admin (verified via `require_auth()`) may call this function.
+    ///
+    /// # Side Effects
+    /// 1. **Reconciliation**: Checks actual contract token balance against the ledger
+    /// 2. **Transfer**: Moves the specified amount to the recipient via token contract
+    /// 3. **Ledger Update**: Deducts the amount from the fee vault persistent storage
+    /// 4. **Nonce Increment**: Atomically increments the per-admin nonce (prevents replay)
+    /// 5. **Audit Event**: Emits [`FeeWithdrawnEvent`] with full context
+    ///
+    /// # Security Considerations
+    /// - **Replay Protection**: Each nonce is consumed exactly once; reuse fails
+    /// - **Reconciliation**: Detects and corrects ledger inconsistencies from token transfers
+    /// - **Atomicity**: The entire withdrawal (transfer + ledger + nonce) is atomic
+    /// - **Event Audit**: All withdrawals are logged for monitoring and compliance
+    ///
+    /// # Example
+    /// ```ignore
+    /// let nonce = contract.get_fee_withdrawal_nonce(env, admin);
+    /// contract.withdraw_fees(env, recipient, usdc, 1000, nonce)?;
+    /// // Next withdrawal must use nonce + 1
+    /// ```
     pub fn withdraw_fees(
         env: Env,
         to: Address,
@@ -3613,12 +3834,52 @@ impl FiatBridge {
         Ok(())
     }
 
-    /// Sweep all accrued fees for each token in `tokens` to the `to` address.
+    /// Sweeps all accrued fees for multiple tokens in a single transaction.
     ///
-    /// Tokens with zero accrued fees are silently skipped. A [`FeeWithdrawnEvent`]
-    /// is emitted per token that has a positive balance, carrying the full event
-    /// schema (nonce is set to `0` since batch sweeps do not consume the
-    /// per-admin replay-protection nonce).
+    /// # Purpose
+    /// Provides an efficient mechanism to extract all accumulated fees across multiple
+    /// tokens in one operation. Useful for periodic fee collection or consolidation
+    /// of fees from various token swaps. Batch withdrawals do NOT consume per-admin
+    /// nonces, allowing them to be used independently of [`Self::withdraw_fees`].
+    ///
+    /// # Parameters
+    /// - `env`: The Stellar contract environment
+    /// - `to`: The recipient address that will receive all tokens
+    /// - `tokens`: Vector of token addresses to sweep fees for
+    ///
+    /// # Returns
+    /// `Ok(())` on successful completion (including if all tokens have zero balance)
+    ///
+    /// # Errors
+    /// - [`Error::NotInitialized`]: Contract admin not set
+    ///
+    /// # Access Control
+    /// Only the contract admin (verified via `require_auth()`) may call this function.
+    ///
+    /// # Behavior
+    /// - **Reconciliation**: For each token, reconciles ledger vs. actual balance
+    /// - **Conditional Sweep**: Only sweeps tokens with fees > 0 (silently skips zero-balance tokens)
+    /// - **Capped by Balance**: If ledger exceeds contract balance, only transfers available amount
+    /// - **Ledger Reset**: Fully drains the fee vault for each token to zero after transfer
+    /// - **Event per Token**: Emits [`FeeWithdrawnEvent`] for each token with fees (nonce = 0)
+    ///
+    /// # Side Effects
+    /// - Reconciles fee vault for each token (may correct inconsistencies)
+    /// - Transfers tokens to recipient for each non-zero vault
+    /// - Resets ledger to zero for each swept token
+    /// - Emits events for audit trail and indexing
+    ///
+    /// # Nonce Behavior
+    /// Unlike [`Self::withdraw_fees`], batch withdrawals set `nonce = 0` in events and
+    /// do NOT increment the per-admin replay-protection nonce. This allows batch sweeps
+    /// to occur independently of sequential single-token withdrawals.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let tokens = vec![usdc_address, usdt_address, native_address];
+    /// contract.withdraw_fees_batch(env, treasury, tokens)?;
+    /// // All accrued fees for each token are now transferred to treasury
+    /// ```
     pub fn withdraw_fees_batch(env: Env, to: Address, tokens: Vec<Address>) -> Result<(), Error> {
         // ── Admin authentication ───────────────────────────────────────────
         let admin: Address = env
