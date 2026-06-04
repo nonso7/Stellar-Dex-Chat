@@ -4257,18 +4257,20 @@ impl FiatBridge {
     /// This function queries the contract's instance storage for the current escrow
     /// storage schema version. The version indicates which storage schema is currently
     /// in use for escrow records. A value of 0 indicates that no migration has been
-    /// performed and the legacy storage format is still in use.
+    /// Retrieves the current escrow storage version from instance storage.
     ///
-    /// # Example
+    /// The version number indicates which schema the escrow records currently follow.
+    /// A version of 0 indicates that the contract is using the legacy storage 
+    /// format (directpersistent storage without versioning metadata).
     ///
-    /// ```rust
-    /// let version = bridge.get_escrow_storage_version(&env);
-    /// if version == 0 {
-    ///     println!("Migration needed");
-    /// } else {
-    ///     println!("Migration complete, version: {}", version);
-    /// }
-    /// ```
+    /// # Returns
+    ///
+    /// * `u32` - The current storage version (e.g., 1 for the current versioned schema).
+    ///
+    /// # Registry
+    ///
+    /// Version 1 was introduced in protocol upgrade v1.2 to support better
+    /// reconciliation and architectural modularity.
     pub fn get_escrow_storage_version(env: Env) -> u32 {
         env.storage()
             .instance()
@@ -4278,62 +4280,37 @@ impl FiatBridge {
 
     /// Migrates escrow records from legacy storage to versioned schema.
     ///
+    /// This function facilitates a controlled, batch-based migration of data 
+    /// from the unversioned persistent storage format to the `EscrowRecord` 
+    /// schema (Version 1).
+    ///
     /// # Arguments
     ///
-    /// * `env` - The contract environment
-    /// * `batch_size` - Maximum number of records to migrate in this call
+    /// * `env` - The contract environment.
+    /// * `batch_size` - Maximum number of records to process in this transaction. 
+    ///   Choosing a size between 10 and 100 is recommended to stay within resource limits.
     ///
     /// # Returns
     ///
-    /// * `Ok(u32)` - Number of records successfully migrated in this batch
-    /// * `Err(Error::MigrationAlreadyComplete)` - Migration is already complete
-    /// * `Err(Error::NotAuthorized)` - Caller is not the admin
-    /// * `Err(Error::NotInitialized)` - Contract has not been initialized
+    /// * `Ok(u32)` - Number of records successfully migrated in this batch.
+    /// * `Err(Error::MigrationAlreadyComplete)` - If the storage version is already at target.
+    /// * `Err(Error::NotAuthorized)` - If the caller is not the contract admin.
+    /// * `Err(Error::NotInitialized)` - If the contract has not been properly initialized.
     ///
-    /// # Description
+    /// # Internal Logic
     ///
-    /// This function performs a cursor-based batch migration of escrow records from
-    /// the legacy storage format to the versioned schema. The migration is designed to
-    /// be:
+    /// 1. **Auth Check**: Verifies `admin.require_auth()`.
+    /// 2. **Version Guard**: Checks if `current_version < ESCROW_STORAGE_VERSION`.
+    /// 3. **Cursor Recovery**: Loads `EscrowMigrationCursor` to resume where the last batch stopped.
+    /// 4. **Batch Loop**: Iterates through `ReceiptIndex` from cursor to `ReceiptCounter`.
+    /// 5. **Transformation**: Converts `Receipt` to `EscrowRecord` and saves to persistent storage.
+    /// 6. **Commit**: Updates the cursor and, if complete, sets the final storage version.
     ///
-    /// - **Resumable**: Can be called multiple times until all records are migrated
-    /// - **Idempotent**: Safe to call after completion (returns error)
-    /// - **Atomic**: Each batch is processed atomically with rollback on failure
+    /// # Security & Atomicity
     ///
-    /// # Migration Process
-    ///
-    /// 1. Verifies caller is authorized (admin only)
-    /// 2. Checks current storage version; returns error if already at target
-    /// 3. Retrieves migration cursor (last processed record ID)
-    /// 4. Processes up to `batch_size` records starting from cursor
-    /// 5. For each record:
-    ///    - Looks up receipt hash from temporary storage index
-    ///    - Retrieves receipt from persistent storage
-    ///    - Creates versioned EscrowRecord with migration metadata
-    ///    - Stores in persistent storage
-    /// 6. Updates cursor to new position
-    /// 7. Sets storage version to target if all records processed
-    /// 8. Emits migration event with progress information
-    ///
-    /// # Performance Considerations
-    ///
-    /// - Each record migration consumes gas; monitor during testing
-    /// - Recommended batch sizes: 10-100 for safety, 100-1000 for speed
-    /// - Use migration events to track progress in production
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// // Migrate 100 records at a time
-    /// let migrated = bridge.migrate_escrow(&env, 100)?;
-    /// println!("Migrated {} records", migrated);
-    ///
-    /// // Check if migration is complete
-    /// let version = bridge.get_escrow_storage_version(&env);
-    /// if version == ESCROW_STORAGE_VERSION {
-    ///     println!("Migration complete");
-    /// }
-    /// ```
+    /// Each call is atomic. If a batch partially fails, the cursor is not updated,
+    /// ensuring no records are skipped. The use of a timelock is not required for 
+    /// migration, but only the admin may trigger it.
     pub fn migrate_escrow(env: Env, batch_size: u32) -> Result<u32, Error> {
         let admin: Address = env
             .storage()
@@ -4441,45 +4418,39 @@ impl FiatBridge {
     /// Records that have not yet been migrated will return `None`.
     ///
     /// # Example
+    /// Retrieves a migrated escrow record by its ID.
     ///
-    /// ```rust
-    /// if let Some(record) = bridge.get_escrow_record(&env, 123) {
-    ///     println!("Depositor: {:?}", record.depositor);
-    ///     println!("Amount: {}", record.amount);
-    ///     println!("Version: {}", record.version);
-    /// }
-    /// ```
+    /// This function only returns records that have already been processed by the
+    /// migration script. For records that haven't been migrated yet, use legacy
+    /// lookup methods or check `get_migration_cursor()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The contract environment.
+    /// * `id` - The record ID to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(EscrowRecord)` - The migrated record if found.
+    /// * `None` - If the record doesn't exist or hasn't been migrated.
     pub fn get_escrow_record(env: Env, id: u64) -> Option<EscrowRecord> {
         env.storage().persistent().get(&DataKey::EscrowRecord(id))
     }
 
     /// Gets the current migration progress cursor.
     ///
+    /// The cursor represents the last successfully processed record ID. This
+    /// can be used to track progress against the `ReceiptCounter`.
+    ///
     /// # Returns
     ///
-    /// * `u64` - The last processed record ID. Returns 0 if migration has not started.
-    ///
-    /// # Description
-    ///
-    /// This function retrieves the migration cursor, which indicates the last record
-    /// ID that was successfully processed during the escrow storage migration.
-    /// The cursor is used to enable resumable migrations - if a migration is
-    /// interrupted, it can be resumed from the last processed position.
+    /// * `u64` - The ID of the last record processed (0 if none or just started).
     ///
     /// # Usage
     ///
-    /// - Monitor migration progress by comparing cursor to total record count
-    /// - Determine if migration is complete (cursor >= total records)
-    /// - Debug migration issues by checking cursor position
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let cursor = bridge.get_migration_cursor(&env);
-    /// let total = bridge.get_receipt_counter(&env);
-    /// let progress = (cursor as f64 / total as f64) * 100.0;
-    /// println!("Migration progress: {:.2}%", progress);
-    /// ```
+    /// - Monitor migration progress by comparing cursor to total record count.
+    /// - Determine if migration is complete (cursor >= total records).
+    /// - Debug migration issues by checking cursor position.
     pub fn get_migration_cursor(env: Env) -> u64 {
         env.storage()
             .instance()

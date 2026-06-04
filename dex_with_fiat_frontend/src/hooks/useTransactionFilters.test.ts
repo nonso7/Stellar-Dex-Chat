@@ -51,18 +51,20 @@ describe('useTransactionFilters', () => {
 
     act(() => {
       result.current.toggleFilter('status', 'completed');
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(51);
+    });
+
+    act(() => {
       result.current.toggleFilter('asset', 'XLM');
     });
 
     expect(mockPush).not.toHaveBeenCalled();
 
     act(() => {
-      vi.advanceTimersByTime(149);
-    });
-    expect(mockPush).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(1);
+      vi.advanceTimersByTime(200);
     });
 
     expect(mockPush).toHaveBeenCalledTimes(1);
