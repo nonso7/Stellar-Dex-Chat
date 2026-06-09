@@ -3063,8 +3063,8 @@ fn test_get_receipt_by_index_nonexistent_index() {
     assert_eq!(receipt.unwrap().amount, 100);
 
     // Indexes that were never written return error
-    assert_eq!(bridge.get_receipt_by_index(&50), Err(Ok(Error::ReceiptIndexOutOfBounds)));
-    assert_eq!(bridge.get_receipt_by_index(&u64::MAX), Err(Ok(Error::ReceiptIndexOutOfBounds)));
+    assert_eq!(bridge.try_get_receipt_by_index(&50), Err(Ok(Error::ReceiptIndexOutOfBounds)));
+    assert_eq!(bridge.try_get_receipt_by_index(&u64::MAX), Err(Ok(Error::ReceiptIndexOutOfBounds)));
 }
 
 #[test]
