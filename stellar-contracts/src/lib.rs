@@ -5736,7 +5736,7 @@ impl FiatBridge {
         UpgradeProposedEvent {
             version: EVENT_VERSION,
             wasm_hash: wasm_hash.clone(),
-            executable_after,
+            executable_after: executable_after as u64,
         }
         .publish(&env);
 
