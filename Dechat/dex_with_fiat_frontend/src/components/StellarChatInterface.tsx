@@ -198,6 +198,21 @@ function StellarChatInterfaceContent() {
     };
   }, []);
 
+  // Global shortcut: Cmd/Ctrl+K toggles ChatSearchPanel from anywhere
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setShowSearch((s) => !s);
+      }
+      if (e.key === 'Escape' && showSearch) {
+        setShowSearch(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [showSearch]);
+
   // ── Health endpoint polling ─────────────────────────────────────────────────
   const pollHealth = useCallback(async () => {
     try {

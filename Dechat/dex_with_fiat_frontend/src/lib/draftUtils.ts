@@ -21,7 +21,13 @@ export const saveDraft = (sessionId: string, content: string): void => {
     content,
     timestamp: Date.now(),
   };
-  localStorage.setItem(`${DRAFT_PREFIX}${sessionId}`, JSON.stringify(draft));
+  try {
+    // Use sessionStorage for transient per-tab drafts so they're preserved
+    // across background/foreground transitions but not across separate tabs.
+    sessionStorage.setItem(`${DRAFT_PREFIX}${sessionId}`, JSON.stringify(draft));
+  } catch (e) {
+    console.error('Failed to save draft to sessionStorage', e);
+  }
 };
 
 /**
@@ -30,7 +36,7 @@ export const saveDraft = (sessionId: string, content: string): void => {
 export const getDraft = (sessionId: string, ttlSeconds: number = DEFAULT_TTL): string | null => {
   if (typeof window === 'undefined' || !sessionId) return null;
   
-  const item = localStorage.getItem(`${DRAFT_PREFIX}${sessionId}`);
+  const item = sessionStorage.getItem(`${DRAFT_PREFIX}${sessionId}`);
   if (!item) return null;
 
   try {
@@ -55,7 +61,11 @@ export const getDraft = (sessionId: string, ttlSeconds: number = DEFAULT_TTL): s
  */
 export const clearDraft = (sessionId: string): void => {
   if (typeof window === 'undefined' || !sessionId) return;
-  localStorage.removeItem(`${DRAFT_PREFIX}${sessionId}`);
+  try {
+    sessionStorage.removeItem(`${DRAFT_PREFIX}${sessionId}`);
+  } catch (e) {
+    console.error('Failed to clear draft from sessionStorage', e);
+  }
 };
 
 /**
@@ -65,22 +75,22 @@ export const clearExpiredDrafts = (ttlSeconds: number = DEFAULT_TTL): void => {
   if (typeof window === 'undefined') return;
 
   const now = Date.now();
-  const keys = Object.keys(localStorage);
+  const keys = Object.keys(sessionStorage);
   
   keys.forEach(key => {
     if (key.startsWith(DRAFT_PREFIX)) {
       try {
-        const item = localStorage.getItem(key);
+        const item = sessionStorage.getItem(key);
         if (item) {
           const draft: Draft = JSON.parse(item);
           const expiryTime = draft.timestamp + ttlSeconds * 1000;
           if (now > expiryTime) {
-            localStorage.removeItem(key);
+            sessionStorage.removeItem(key);
           }
         }
       } catch {
         // Remove corrupted items
-        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
       }
     }
   });

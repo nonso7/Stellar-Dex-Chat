@@ -195,6 +195,27 @@ export const useChatHistory = () => {
     });
   }, []);
 
+  const reorderPinned = useCallback((newPinnedOrder: string[]) => {
+    setHistoryState((prev) => {
+      const sessionsMap = new Map(prev.sessions.map((s) => [s.id, s]));
+      const pinnedCount = newPinnedOrder.length;
+
+      // Assign new pinnedAt timestamps to preserve ordering (newest first)
+      const now = Date.now();
+      const updated = [...prev.sessions];
+
+      newPinnedOrder.forEach((id, index) => {
+        const s = sessionsMap.get(id);
+        if (!s) return;
+        const updatedSession = { ...s, pinned: true, pinnedAt: new Date(now + (pinnedCount - index)) } as ChatSession;
+        const idx = updated.findIndex((ss) => ss.id === id);
+        if (idx !== -1) updated[idx] = updatedSession;
+      });
+
+      return { ...prev, sessions: updated };
+    });
+  }, []);
+
   // Pinned sessions first (sorted by pinnedAt desc), then unpinned (by lastUpdated desc)
   const sortedSessions = [...historyState.sessions].sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
@@ -225,6 +246,7 @@ export const useChatHistory = () => {
     loadSession,
     deleteSession,
     clearAllHistory,
+    reorderPinned,
     exportSession,
     exportSessionAsJSON,
     exportSessionAsTXT,

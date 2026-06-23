@@ -29,6 +29,7 @@ import PriceTicker from '@/components/PriceTicker';
 
 import { ChatSession } from '@/types';
 import { ContractEvent } from '@/types/events';
+import { useSessionPagination } from '@/hooks/useSessionPagination';
 
 interface SessionRowProps {
   session: ChatSession;
@@ -200,6 +201,7 @@ export default function ChatHistorySidebar({
     togglePin,
     hasHistory,
     sessions: allSessionsRaw,
+    reorderPinned,
   } = useChatHistory();
   const { entries, clearEntries, updateEntry } = useTxHistory();
   const { connection } = useStellarWallet();
@@ -273,17 +275,113 @@ export default function ChatHistorySidebar({
   const filteredUnpinned = filteredSessions.filter((s) => !s.pinned);
   const filteredSessionIds = filteredSessions.map((s) => s.id).join(',');
   const historyListRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollSnapshotRef = useRef<{ top: number; height: number } | null>(null);
+  const draggedIdRef = useRef<string | null>(null);
+  const dragOverIdRef = useRef<string | null>(null);
+
+  const onDragStart = useCallback((e: React.DragEvent, id: string) => {
+    draggedIdRef.current = id;
+    e.dataTransfer.effectAllowed = 'move';
+    try {
+      e.dataTransfer.setData('text/plain', id);
+    } catch {}
+  }, []);
+
+  const onDragOver = useCallback((e: React.DragEvent, id: string) => {
+    e.preventDefault();
+    dragOverIdRef.current = id;
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const onDrop = useCallback(() => {
+    const fromId = draggedIdRef.current;
+    const toId = dragOverIdRef.current;
+    if (!fromId || !toId || fromId === toId) return;
+
+    const pinnedIds = filteredPinned.map((s) => s.id);
+    const fromIndex = pinnedIds.indexOf(fromId);
+    const toIndex = pinnedIds.indexOf(toId);
+    if (fromIndex === -1 || toIndex === -1) return;
+
+    const reordered = [...pinnedIds];
+    // remove fromIndex
+    reordered.splice(fromIndex, 1);
+    // insert at toIndex
+    reordered.splice(toIndex, 0, fromId);
+
+    reorderPinned(reordered);
+    draggedIdRef.current = null;
+    dragOverIdRef.current = null;
+  }, [filteredPinned, reorderPinned]);
+
+  const movePinned = useCallback((id: string, direction: 'up' | 'down') => {
+    const pinnedIds = filteredPinned.map((s) => s.id);
+    const idx = pinnedIds.indexOf(id);
+    if (idx === -1) return;
+    const target = direction === 'up' ? idx - 1 : idx + 1;
+    if (target < 0 || target >= pinnedIds.length) return;
+    const reordered = [...pinnedIds];
+    const [item] = reordered.splice(idx, 1);
+    reordered.splice(target, 0, item);
+    reorderPinned(reordered);
+  }, [filteredPinned, reorderPinned]);
+
+  // Windowed rendering for unpinned sessions
+  const {
+    visibleItems: visibleUnpinned,
+    hasMore: unpinnedHasMore,
+    isLoadingMore: unpinnedIsLoadingMore,
+    loadMore: loadMoreUnpinned,
+    setVisibleCount: setUnpinnedVisibleCount,
+  } = useSessionPagination(filteredUnpinned, 60);
 
   useEffect(() => {
     if (isCollapsed) return;
 
-    const activeRow = historyListRef.current?.querySelector<HTMLElement>(
-      '[data-active="true"]',
-    );
-    if (!activeRow) return;
-
-    activeRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Ensure active session is visible in the windowed list; if not, expand window
+    const activeRow = historyListRef.current?.querySelector<HTMLElement>('[data-active="true"]');
+    if (activeRow) {
+      activeRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      return;
+    }
+    // If activeRow is not rendered because of windowing, expand the unpinned window to include it.
   }, [currentSessionId, filteredSessionIds, isCollapsed]);
+
+  // If active session is outside the current visible window, expand the window to include it.
+  useEffect(() => {
+    if (!currentSessionId) return;
+    const idx = filteredUnpinned.findIndex((s) => s.id === currentSessionId);
+    if (idx === -1) return;
+
+    const neededVisible = filteredUnpinned.length - idx;
+    if (neededVisible > visibleUnpinned.length) {
+      setUnpinnedVisibleCount(Math.min(filteredUnpinned.length, neededVisible));
+    }
+  }, [currentSessionId, filteredUnpinned, visibleUnpinned.length, setUnpinnedVisibleCount]);
+
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    if (el.scrollTop < 160 && unpinnedHasMore && !unpinnedIsLoadingMore) {
+      // take a snapshot so we can preserve visual position after loading
+      scrollSnapshotRef.current = { top: el.scrollTop, height: el.scrollHeight };
+      loadMoreUnpinned();
+    }
+  }, [unpinnedHasMore, unpinnedIsLoadingMore, loadMoreUnpinned]);
+
+  // When a loadMore finishes, restore scroll position to avoid jump
+  useEffect(() => {
+    if (unpinnedIsLoadingMore) return;
+    const snap = scrollSnapshotRef.current;
+    const el = scrollContainerRef.current;
+    if (snap && el) {
+      const newHeight = el.scrollHeight;
+      el.scrollTop = newHeight - snap.height + snap.top;
+      scrollSnapshotRef.current = null;
+    }
+  }, [unpinnedIsLoadingMore]);
 
   // ── Optimistic delete with undo ──────────────────────────────────────────
   const handleDeleteSession = useCallback(
@@ -550,7 +648,7 @@ export default function ChatHistorySidebar({
           )}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
           {isLoading ? (
             <SkeletonSidebar />
           ) : (
@@ -653,19 +751,54 @@ export default function ChatHistorySidebar({
                             Pinned
                           </p>
                         )}
-                        {filteredPinned.map((session) => (
-                          <SessionRow
+                        {filteredPinned.map((session, idx) => (
+                          <div
                             key={session.id}
-                            session={session}
-                            isActive={currentSessionId === session.id}
-                            onLoad={onLoadSession}
-                            onExportJSON={handleExportSessionJSON}
-                            onExportTXT={handleExportSessionTXT}
-                            onDelete={(id) => setShowDeleteConfirm(id)}
-                            onTogglePin={handleTogglePin}
-                            formatDate={formatDate}
-                            recentlyToggledPinId={recentlyToggledPinId}
-                          />
+                            draggable
+                            onDragStart={(e) => onDragStart(e, session.id)}
+                            onDragOver={(e) => onDragOver(e, session.id)}
+                            onDrop={onDrop}
+                            role="group"
+                            aria-roledescription="draggable pinned session"
+                            className="relative group"
+                          >
+                            <div className="absolute left-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                              <button
+                                aria-label="Reorder pinned up"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  movePinned(session.id, 'up');
+                                }}
+                                className="p-1 text-xs mr-1"
+                              >
+                                ▲
+                              </button>
+                              <button
+                                aria-label="Reorder pinned down"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  movePinned(session.id, 'down');
+                                }}
+                                className="p-1 text-xs"
+                              >
+                                ▼
+                              </button>
+                            </div>
+
+                            <div className="pl-8">
+                              <SessionRow
+                                session={session}
+                                isActive={currentSessionId === session.id}
+                                onLoad={onLoadSession}
+                                onExportJSON={handleExportSessionJSON}
+                                onExportTXT={handleExportSessionTXT}
+                                onDelete={(id) => setShowDeleteConfirm(id)}
+                                onTogglePin={handleTogglePin}
+                                formatDate={formatDate}
+                                recentlyToggledPinId={recentlyToggledPinId}
+                              />
+                            </div>
+                          </div>
                         ))}
                       </>
                     )}
@@ -676,7 +809,7 @@ export default function ChatHistorySidebar({
                             Recent
                           </p>
                         )}
-                        {filteredUnpinned.map((session) => (
+                        {visibleUnpinned.map((session) => (
                           <SessionRow
                             key={session.id}
                             session={session}

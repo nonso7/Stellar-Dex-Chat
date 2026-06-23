@@ -247,6 +247,19 @@ export default function ChatInput({
     }
   }, [sessionId]);
 
+  // Restore draft when the tab gains focus (handles background/foreground loss)
+  useEffect(() => {
+    const onFocus = () => {
+      if (!sessionId) return;
+      const draft = getDraft(sessionId);
+      if (draft !== null && draft !== message) {
+        setMessage(draft);
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [sessionId, message]);
+
   // Save draft when message changes (debounced 500ms)
   useEffect(() => {
     if (!sessionId) return;
