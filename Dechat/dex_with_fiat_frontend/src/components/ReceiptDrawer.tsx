@@ -217,23 +217,26 @@ export default function ReceiptDrawer({
                     )}
                     {tx.txHash && (
                       <div className="flex justify-between items-center gap-2">
-                        <span className="text-gray-500">
+                        <span className="text-gray-500 shrink-0">
                           {t('receipt.hash')}
                         </span>
                         <a
                           href={`https://stellar.expert/explorer/testnet/tx/${tx.txHash}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-blue-500 hover:underline font-mono text-[10px]"
+                          className="flex items-center gap-1 text-blue-500 hover:underline font-mono text-[10px] min-w-0 truncate"
+                          title={tx.txHash}
                         >
-                          {tx.txHash.substring(0, 8)}...
-                          <ExternalLink className="w-3 h-3" />
+                          {tx.txHash.length > 16
+                            ? `${tx.txHash.substring(0, 8)}...${tx.txHash.substring(tx.txHash.length - 6)}`
+                            : tx.txHash}
+                          <ExternalLink className="w-3 h-3 shrink-0" />
                         </a>
                       </div>
                     )}
                     <div className="flex justify-between text-[10px] text-gray-500 pt-2 border-t dark:border-gray-700">
-                      <span>{tx.id}</span>
-                      <span>{new Date(tx.createdAt).toLocaleString()}</span>
+                      <span className="truncate min-w-0 mr-2" title={tx.id}>{tx.id}</span>
+                      <span className="shrink-0">{new Date(tx.createdAt).toLocaleString()}</span>
                     </div>
                   </div>
                 </div>

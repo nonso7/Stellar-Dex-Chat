@@ -70,10 +70,24 @@ export function TransactionAmountDisplay(props: TransactionAmountProps) {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     });
-    return `${numericAmount} ${normalizedAsset} ≈ ${currencySymbol}${formattedFiat} ${fiatCurrency.toUpperCase()}`;
+    const formattedAmount = normalizedAsset === 'XLM' && numericAmount < 0.001
+      ? numericAmount.toFixed(7)
+      : String(numericAmount);
+    return `${formattedAmount} ${normalizedAsset} ≈ ${currencySymbol}${formattedFiat} ${fiatCurrency.toUpperCase()}`;
   }, [isLoading, parsed, numericAmount, normalizedAsset, currencySymbol, fiatCurrency]);
 
-  const renderedText = optimisticDisplayText ?? displayText;
+  const formattedHookText = useMemo(() => {
+    if (!displayText || normalizedAsset !== 'XLM' || numericAmount >= 0.001) {
+      return displayText;
+    }
+    const fixedAmount = numericAmount.toFixed(7);
+    return displayText.replace(
+      new RegExp(`^${numericAmount}(?=\\s)`),
+      fixedAmount,
+    );
+  }, [displayText, normalizedAsset, numericAmount]);
+
+  const renderedText = optimisticDisplayText ?? formattedHookText;
   const isOptimistic = optimisticDisplayText != null;
 
   // Auto-scroll: keep the latest amount visible whenever displayText updates.

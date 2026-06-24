@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { ArrowLeftRight, X, ChevronDown, Copy, Check } from 'lucide-react';
+import { ArrowLeftRight, X, ChevronDown, Copy, Check, Columns2 } from 'lucide-react';
 import { ChatSession, ChatMessage } from '@/types';
 import { UseSplitViewReturn } from '@/hooks/useSplitView';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { useToast } from '@/hooks/useToast';
 import { useEffectiveDarkMode } from '@/hooks/useEffectiveDarkMode';
+import EmptyState from '@/components/ui/EmptyState';
 
 interface SplitViewComparisonProps {
   splitView: UseSplitViewReturn;
@@ -289,6 +290,8 @@ export default function SplitViewComparison({
 
   if (!state.isOpen) return null;
 
+  const bothEmpty = !leftSession && !rightSession;
+
   const dialogTitleId = 'split-view-comparison-title';
 
   return (
@@ -347,24 +350,34 @@ export default function SplitViewComparison({
 
       {/* Two panes */}
       <div className="flex flex-1 min-h-0 overflow-hidden flex-col md:flex-row">
-        <ThreadPane
-          session={leftSession}
-          label="Left"
-          selectedMessageId={state.selectedMessageId}
-          allSessions={sessions}
-          onSelectSession={setLeftSession}
-          onSelectMessage={selectMessage}
-          onCopyMessage={handleCopyMessage}
-        />
-        <ThreadPane
-          session={rightSession}
-          label="Right"
-          selectedMessageId={state.selectedMessageId}
-          allSessions={sessions}
-          onSelectSession={setRightSession}
-          onSelectMessage={selectMessage}
-          onCopyMessage={handleCopyMessage}
-        />
+        {bothEmpty ? (
+          <EmptyState
+            icon={Columns2}
+            title="No threads to compare"
+            description="Select threads from each side to start comparing."
+          />
+        ) : (
+          <>
+            <ThreadPane
+              session={leftSession}
+              label="Left"
+              selectedMessageId={state.selectedMessageId}
+              allSessions={sessions}
+              onSelectSession={setLeftSession}
+              onSelectMessage={selectMessage}
+              onCopyMessage={handleCopyMessage}
+            />
+            <ThreadPane
+              session={rightSession}
+              label="Right"
+              selectedMessageId={state.selectedMessageId}
+              allSessions={sessions}
+              onSelectSession={setRightSession}
+              onSelectMessage={selectMessage}
+              onCopyMessage={handleCopyMessage}
+            />
+          </>
+        )}
       </div>
     </div>
   );

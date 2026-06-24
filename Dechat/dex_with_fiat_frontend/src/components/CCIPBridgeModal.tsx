@@ -26,6 +26,13 @@ export interface CCIPBridgeModalProps {
   fetchTransferStatus: (transactionHash: string) => Promise<CCIPStatusResult>;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  /**
+   * Currently selected network identifier (chain ID or name).
+   * When this value changes the modal immediately invalidates any in-progress
+   * fee estimate or polling state so stale data from the previous network is
+   * never shown to the user.
+   */
+  network?: string | number;
 }
 
 export default function CCIPBridgeModal({
@@ -35,6 +42,7 @@ export default function CCIPBridgeModal({
   fetchTransferStatus,
   pollIntervalMs = CCIP_POLL_INTERVAL_MS,
   timeoutMs = CCIP_POLL_TIMEOUT_MS,
+  network,
 }: CCIPBridgeModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const pollingStartedAtRef = useRef<number | null>(null);
@@ -47,6 +55,7 @@ export default function CCIPBridgeModal({
   const [explorerUrl, setExplorerUrl] = useState('');
   const [latestStatus, setLatestStatus] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [networkChangedWhileActive, setNetworkChangedWhileActive] = useState(false);
 
   // Keep ref in sync with state.
   useEffect(() => {
@@ -63,6 +72,7 @@ export default function CCIPBridgeModal({
     setExplorerUrl('');
     setLatestStatus('');
     setErrorMessage('');
+    setNetworkChangedWhileActive(false);
   }, []);
 
   useEffect(() => {
@@ -70,6 +80,32 @@ export default function CCIPBridgeModal({
       resetState();
     }
   }, [isOpen, resetState]);
+
+  // Fix #954: immediately invalidate in-progress state when the network changes
+  // so the stale fee estimate / polling result from the previous network is never
+  // visible to the user.  Skip the very first render (network undefined → value).
+  const prevNetworkRef = useRef(network);
+  useEffect(() => {
+    const prev = prevNetworkRef.current;
+    prevNetworkRef.current = network;
+
+    // Only act if the network actually changed (not just on first mount).
+    if (prev === undefined || prev === network) return;
+
+    if (bridgeState !== 'idle' && bridgeState !== 'success') {
+      // Reset fee/status display immediately; keep bridgeState readable so
+      // we can show the "network changed" notice.
+      setLatestStatus('');
+      setExplorerUrl('');
+      setNetworkChangedWhileActive(true);
+      // Abort any outstanding polling by resetting to idle.
+      pollingStartedAtRef.current = null;
+      transactionHashRef.current = '';
+      setBridgeState('idle');
+      setTransactionHash('');
+      setErrorMessage('');
+    }
+  }, [network, bridgeState]);
 
   const handleStartTransfer = useCallback(async () => {
     // Immediately show optimistic UI
@@ -239,10 +275,25 @@ export default function CCIPBridgeModal({
           </button>
         </div>
 
+        {networkChangedWhileActive && (
+          <div
+            role="alert"
+            aria-live="polite"
+            className="mb-4 flex items-center gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-700 dark:text-yellow-400"
+          >
+            <AlertCircle className="h-4 w-4 flex-shrink-0" />
+            Network changed — fee estimate cleared. Start a new transfer on the
+            current network.
+          </div>
+        )}
+
         {bridgeState === 'idle' && (
           <button
             type="button"
-            onClick={() => void handleStartTransfer()}
+            onClick={() => {
+              setNetworkChangedWhileActive(false);
+              void handleStartTransfer();
+            }}
             className="theme-primary-button w-full py-3 rounded-lg font-medium"
           >
             Start CCIP Transfer

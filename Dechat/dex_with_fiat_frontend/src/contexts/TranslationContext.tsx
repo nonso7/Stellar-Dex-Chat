@@ -45,15 +45,16 @@ function detectBrowserLocale(): SupportedLocale {
 }
 
 export function TranslationProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<SupportedLocale>(detectBrowserLocale);
-
-  const setLocale = useCallback((next: SupportedLocale) => {
-    if (SUPPORTED_LOCALES.includes(next)) {
-      setLocaleState(next);
-    } else {
-      console.warn(`TranslationProvider: unsupported locale "${next}", falling back to "en"`);
-      setLocaleState('en');
+  const [locale, setLocale] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('locale') || 'en';
     }
+    return 'en';
+  });
+
+  const handleSetLocale = useCallback((newLocale: string) => {
+    setLocale(newLocale);
+    localStorage.setItem('locale', newLocale);
   }, []);
 
   const t = useCallback((key: string, params?: Record<string, string | number>) => {
@@ -87,7 +88,7 @@ export function TranslationProvider({ children }: { children: React.ReactNode })
     return value;
   }, [locale]);
 
-  const value = useMemo(() => ({ t, locale, setLocale }), [t, locale, setLocale]);
+  const value = useMemo(() => ({ t, locale, setLocale: handleSetLocale }), [t, locale, handleSetLocale]);
 
   return (
     <TranslationContext.Provider value={value}>

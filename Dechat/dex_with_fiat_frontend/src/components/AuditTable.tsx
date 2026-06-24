@@ -7,6 +7,9 @@ import { useToast } from '@/hooks/useToast';
 import Skeleton from '@/components/ui/skeleton/Skeleton';
 import { withNetworkReadQueue, subscribeToQueue } from '@/lib/networkQueue';
 
+type SortKey = 'timestamp' | 'adminAddress' | 'actionType' | 'status';
+type SortOrder = 'asc' | 'desc';
+
 interface AuditTableProps {
   onRefresh?: () => void;
 }
@@ -26,6 +29,8 @@ export default function AuditTable({}: AuditTableProps) {
   const [error, setError] = useState<string | null>(null);
   const [totalEntries, setTotalEntries] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
+  const [sortKey, setSortKey] = useState<SortKey>('timestamp');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [filters, setFilters] = useState<FilterState>({
     actionType: '',
     status: '',
@@ -69,6 +74,8 @@ export default function AuditTable({}: AuditTableProps) {
 
       params.append('limit', pageSize.toString());
       params.append('offset', (currentPage * pageSize).toString());
+      params.append('sortKey', sortKey);
+      params.append('sortOrder', sortOrder);
 
       const url = `/api/admin-audit?${params.toString()}`;
 
@@ -104,7 +111,7 @@ export default function AuditTable({}: AuditTableProps) {
         setLoading(false);
       }
     }
-  }, [filters, currentPage]);
+  }, [filters, currentPage, sortKey, sortOrder]);
 
   useEffect(() => {
     void fetchAuditEntries();
@@ -157,6 +164,32 @@ export default function AuditTable({}: AuditTableProps) {
       endDate: '',
     });
     setCurrentPage(0);
+  };
+
+  // Toggling sort order on the same column or switching to a new column must
+  // NOT reset the page — the user may intentionally be reading page 3 and want
+  // to flip the sort direction without losing their position.
+  const handleSortChange = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortOrder('asc');
+    }
+  };
+
+  const SortIndicator = ({ column }: { column: SortKey }) => {
+    if (sortKey !== column) {
+      return <span className="ml-1 text-gray-500" aria-hidden="true">↕</span>;
+    }
+    return (
+      <span
+        className="ml-1 text-blue-400"
+        aria-label={sortOrder === 'asc' ? 'sorted ascending' : 'sorted descending'}
+      >
+        {sortOrder === 'asc' ? '↑' : '↓'}
+      </span>
+    );
   };
 
   const formatTimestamp = (date: Date) => {
@@ -403,13 +436,34 @@ export default function AuditTable({}: AuditTableProps) {
             <thead className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Timestamp
+                  <button
+                    type="button"
+                    onClick={() => handleSortChange('timestamp')}
+                    className="flex items-center hover:text-blue-500 transition-colors"
+                    aria-label="Sort by Timestamp"
+                  >
+                    Timestamp <SortIndicator column="timestamp" />
+                  </button>
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Admin
+                  <button
+                    type="button"
+                    onClick={() => handleSortChange('adminAddress')}
+                    className="flex items-center hover:text-blue-500 transition-colors"
+                    aria-label="Sort by Admin"
+                  >
+                    Admin <SortIndicator column="adminAddress" />
+                  </button>
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Action
+                  <button
+                    type="button"
+                    onClick={() => handleSortChange('actionType')}
+                    className="flex items-center hover:text-blue-500 transition-colors"
+                    aria-label="Sort by Action"
+                  >
+                    Action <SortIndicator column="actionType" />
+                  </button>
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
                   Description
@@ -418,7 +472,14 @@ export default function AuditTable({}: AuditTableProps) {
                   TX Hash
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-700 dark:text-gray-300 uppercase tracking-wider">
-                  Status
+                  <button
+                    type="button"
+                    onClick={() => handleSortChange('status')}
+                    className="flex items-center hover:text-blue-500 transition-colors"
+                    aria-label="Sort by Status"
+                  >
+                    Status <SortIndicator column="status" />
+                  </button>
                 </th>
               </tr>
             </thead>

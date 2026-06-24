@@ -3,6 +3,7 @@
 import { useRef, useState } from 'react';
 import { X, Check, Plus, Trash2, Edit2 } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useTranslation } from '@/contexts/TranslationContext';
 import {
   SUPPORTED_FIAT_CURRENCIES,
   FiatCurrencyCode,
@@ -23,6 +24,7 @@ interface UserSettingsProps {
 
 export default function UserSettings({ isOpen, onClose }: UserSettingsProps) {
   const { isDarkMode } = useTheme();
+  const { locale, setLocale } = useTranslation();
   const enableConversionReminders = useFeatureFlag('enableConversionReminders');
   const {
     fiatCurrency,
@@ -376,6 +378,63 @@ export default function UserSettings({ isOpen, onClose }: UserSettingsProps) {
               })}
             </ul>
           </section>
+
+          {/* Language section */}
+          <section>
+            <h3
+              className={`text-xs font-semibold uppercase tracking-wider mb-3 ${
+                isDarkMode ? 'text-gray-400' : 'text-gray-500'
+              }`}
+            >
+              Language
+            </h3>
+            <p
+              className={`text-xs mb-4 ${
+                isDarkMode ? 'text-gray-500' : 'text-gray-400'
+              }`}
+            >
+              Interface language for the application.
+            </p>
+            <ul
+              role="listbox"
+              aria-label="Select language"
+              className="space-y-1"
+            >
+              {[
+                { code: 'en', label: 'English' },
+              ].map(({ code, label }) => {
+                const isSelected = locale === code;
+                return (
+                  <li key={code}>
+                    <button
+                      role="option"
+                      aria-selected={isSelected}
+                      onClick={() => setLocale(code)}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-lg text-sm transition-all duration-150 ${
+                        isSelected
+                          ? isDarkMode
+                            ? 'bg-blue-900/40 border border-blue-500/60 text-blue-300'
+                            : 'bg-blue-50 border border-blue-300 text-blue-700'
+                          : isDarkMode
+                            ? 'border border-transparent hover:bg-gray-800 text-gray-300'
+                            : 'border border-transparent hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      <span>{label}</span>
+                      {isSelected && (
+                        <Check
+                          className={`w-4 h-4 shrink-0 ${
+                            isDarkMode ? 'text-blue-400' : 'text-blue-600'
+                          }`}
+                        />
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
           {/* Telemetry section */}
           <section
             className={`pt-6 border-t ${featureFlagSectionDividerBorderClass(isDarkMode)}`}
