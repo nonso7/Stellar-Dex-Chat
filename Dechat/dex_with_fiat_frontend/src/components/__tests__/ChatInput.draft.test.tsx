@@ -37,7 +37,7 @@ describe('ChatInput - Draft Persistence', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
   });
 
   afterEach(() => {
@@ -78,15 +78,10 @@ describe('ChatInput - Draft Persistence', () => {
     (draftUtils.getDraft as vi.Mock).mockReturnValue('Message to send');
     render(<ChatInput {...defaultProps} />);
 
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('Type a message...')).toHaveValue(
-        'Message to send',
-      );
-    });
+    const textarea = screen.getByPlaceholderText('Type a message...');
+    expect(textarea).toHaveValue('Message to send');
 
-    const submitButton = screen.getByRole('button', { name: /send message/i });
-
-    fireEvent.click(submitButton);
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     await waitFor(() => {
       expect(mockOnSendMessage).toHaveBeenCalledWith('Message to send');

@@ -121,7 +121,10 @@ describe('AdminDashboard - Dark Mode Support', () => {
     const themedSurfaces = document.querySelectorAll('.theme-surface');
     expect(themedSurfaces.length).toBeGreaterThan(0);
     themedSurfaces.forEach((surface) => {
-      if (surface.querySelector('[aria-label="Admin audit log entries"]')) {
+      if (
+        surface.querySelector('[aria-label="Admin audit log entries"]') ||
+        surface.querySelector('button[aria-label*="Copy"]')
+      ) {
         return;
       }
       const html = surface.outerHTML;

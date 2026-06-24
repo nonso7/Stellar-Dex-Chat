@@ -118,11 +118,12 @@ export default function CCIPBridgeModal({
     if (!hash) return;
 
     const pollingStartedAt = pollingStartedAtRef.current;
-    if (
+    const hasTimedOut =
       pollingStartedAt !== null &&
-      Date.now() - pollingStartedAt >= timeoutMs
-    ) {
-      if (signal.aborted) return;
+      Date.now() - pollingStartedAt >= timeoutMs;
+
+    if (hasTimedOut) {
+      signal.aborted = true;
       setBridgeState('error');
       setErrorMessage(
         'CCIP confirmation timed out after 10 minutes. Please verify the transaction in the explorer and try again.',
@@ -133,6 +134,18 @@ export default function CCIPBridgeModal({
     try {
       const result = await fetchTransferStatus(hash);
       if (signal.aborted) return;
+
+      if (
+        pollingStartedAtRef.current !== null &&
+        Date.now() - pollingStartedAtRef.current >= timeoutMs
+      ) {
+        signal.aborted = true;
+        setBridgeState('error');
+        setErrorMessage(
+          'CCIP confirmation timed out after 10 minutes. Please verify the transaction in the explorer and try again.',
+        );
+        return;
+      }
 
       // Optimistic UI: update status immediately
       setLatestStatus(result.status);
@@ -154,23 +167,27 @@ export default function CCIPBridgeModal({
         return;
       }
 
+      if (signal.aborted) return;
       setBridgeState('polling');
     } catch (error) {
       if (signal.aborted) return;
-      // Maintain PENDING status during transient errors
-      setLatestStatus('PENDING');
-      setBridgeState('polling');
+      const startedAt = pollingStartedAtRef.current;
       if (
-        pollingStartedAt !== null &&
-        Date.now() - pollingStartedAt >= timeoutMs
+        startedAt !== null &&
+        Date.now() - startedAt >= timeoutMs
       ) {
+        signal.aborted = true;
         setBridgeState('error');
         setErrorMessage(
           error instanceof Error
             ? error.message
             : 'CCIP confirmation timed out after 10 minutes.',
         );
+        return;
       }
+      // Maintain PENDING status during transient errors
+      setLatestStatus('PENDING');
+      setBridgeState('polling');
     }
   }, [fetchTransferStatus, timeoutMs]);
 

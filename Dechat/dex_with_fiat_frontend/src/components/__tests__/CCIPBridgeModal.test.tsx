@@ -104,12 +104,10 @@ describe('CCIPBridgeModal', () => {
     ).toBeInTheDocument();
 
     await act(async () => {
-      vi.advanceTimersByTime(11 * 60 * 1000);
+      await vi.advanceTimersByTimeAsync(11 * 60 * 1000);
     });
 
-    expect(
-      await screen.findByText('CCIP transfer error'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('CCIP transfer error')).toBeInTheDocument();
     expect(
       screen.getByText(/timed out after 10 minutes/i),
     ).toBeInTheDocument();
@@ -579,12 +577,10 @@ describe('CCIPBridgeModal', () => {
       await screen.findByText('Waiting for CCIP confirmation…');
 
       await act(async () => {
-        vi.advanceTimersByTime(30000);
+        await vi.advanceTimersByTimeAsync(30000);
       });
 
-      expect(
-        await screen.findByText('CCIP transfer error'),
-      ).toBeInTheDocument();
+      expect(screen.getByText('CCIP transfer error')).toBeInTheDocument();
       expect(
         screen.getByText(/timed out after 10 minutes/i),
       ).toBeInTheDocument();
@@ -904,12 +900,21 @@ describe('CCIPBridgeModal', () => {
       );
 
       fireEvent.click(screen.getByText('Start CCIP Transfer'));
+      await screen.findByText('Waiting for CCIP confirmation…');
+
+      await waitFor(() => {
+        expect(fetchTransferStatus).toHaveBeenCalledTimes(1);
+      });
 
       await act(async () => {
         vi.advanceTimersByTime(15_000);
       });
 
-      const explorerLink = screen.getByRole('link', {
+      await waitFor(() => {
+        expect(fetchTransferStatus).toHaveBeenCalledTimes(2);
+      });
+
+      const explorerLink = await screen.findByRole('link', {
         name: /view transaction in ccip explorer/i,
       });
 

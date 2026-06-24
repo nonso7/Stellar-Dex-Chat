@@ -134,8 +134,9 @@ describe('ChatInput Keyboard Shortcuts', () => {
       const input = screen.getByPlaceholderText('chat.placeholder');
       await userEvent.type(input, '/');
 
-      // Command suggestions should appear
-      expect(screen.queryByText(/deposit|rates|portfolio|help/i)).toBeDefined();
+      // Command suggestions should appear in the palette (not the quick-suggestion chips)
+      expect(screen.getByText('/deposit')).toBeInTheDocument();
+      expect(screen.getByText('/help')).toBeInTheDocument();
     });
 
     it('navigates command suggestions with arrow keys', async () => {

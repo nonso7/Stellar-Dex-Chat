@@ -147,11 +147,14 @@ describe('ChatInput - Rapid Click Protection', () => {
     const textarea = screen.getByPlaceholderText('Type a message...');
 
     fireEvent.change(textarea, { target: { value: 'Test message' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
-    const form = textarea.closest('form');
-    expect(form).toBeTruthy();
-    fireEvent.submit(form!);
-    fireEvent.submit(form!);
+    await waitFor(() => {
+      expect(mockOnSendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(textarea, { target: { value: 'Another message' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', code: 'Enter', ctrlKey: true });
 
     await waitFor(() => {
       expect(consoleWarnSpy).toHaveBeenCalledWith(
@@ -159,6 +162,7 @@ describe('ChatInput - Rapid Click Protection', () => {
         expect.any(Object),
       );
     });
+    expect(mockOnSendMessage).toHaveBeenCalledTimes(1);
   });
 
   it('should clear input after successful submission', async () => {
