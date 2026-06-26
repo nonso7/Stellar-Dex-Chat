@@ -23,6 +23,7 @@ interface ChatMessagesProps {
     data?: Record<string, unknown>,
   ) => void;
   isLoading?: boolean;
+  searchQuery?: string;
 }
 
 interface HelpCardProps {
@@ -107,6 +108,7 @@ export default function ChatMessages({
   messages: allMessages,
   onActionClick,
   isLoading = false,
+  searchQuery = '',
 }: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -273,53 +275,91 @@ export default function ChatMessages({
     >
       {visibleMessages.length === 0 ? (
         <div className="max-w-4xl mx-auto h-full flex flex-col items-center justify-center py-12">
-          {/* Welcome Header */}
-          <div className="text-center mb-12">
-            <div
-              className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4 ${isDarkMode
-                  ? 'bg-blue-500/10 text-blue-400'
-                  : 'bg-blue-50 text-blue-600'
+          {searchQuery.trim() ? (
+            /* ── Search returned nothing ── */
+            <div className="text-center animate-in fade-in duration-300">
+              <div
+                className={`inline-flex items-center justify-center w-16 h-16 rounded-full mb-6 ${
+                  isDarkMode ? 'bg-gray-800' : 'bg-gray-100'
                 }`}
-            >
-              <Sparkles className="w-3 h-3" />
-              AI-Powered Bridge
-            </div>
-            <h1
-              className={`text-4xl font-bold mb-4 tracking-tight ${isDarkMode ? 'text-white' : 'text-gray-900'
-                }`}
-            >
-              Welcome to <span className="text-blue-600">DexFiat</span>
-            </h1>
-            <p
-              className={`text-lg max-w-xl mx-auto leading-relaxed ${isDarkMode ? 'text-gray-400' : 'text-gray-500'
-                }`}
-            >
-              The most intuitive way to convert your Stellar assets to fiat
-              currency. Follow the steps below to get started.
-            </p>
-          </div>
-
-          {/* Help Cards Grid */}
-          {isLoaded && visibleCards.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full animate-in fade-in slide-in-from-bottom-4 duration-700">
-              {visibleCards.map((card) => (
-                <HelpCard
-                  key={card.id}
-                  {...card}
-                  onDismiss={dismissCard}
-                  isDarkMode={isDarkMode}
+              >
+                <Sparkles
+                  className={`w-7 h-7 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}
                 />
-              ))}
+              </div>
+              <h2
+                className={`text-xl font-semibold mb-2 ${
+                  isDarkMode ? 'text-gray-100' : 'text-gray-900'
+                }`}
+              >
+                No results for &ldquo;{searchQuery}&rdquo;
+              </h2>
+              <p
+                className={`text-sm max-w-xs mx-auto ${
+                  isDarkMode ? 'text-gray-400' : 'text-gray-500'
+                }`}
+              >
+                Try a different search term or clear your search to view all
+                messages.
+              </p>
             </div>
-          )}
+          ) : (
+            /* ── New user / no chats ── */
+            <>
+              {/* Welcome Header */}
+              <div className="text-center mb-12">
+                <div
+                  className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-4 ${
+                    isDarkMode
+                      ? 'bg-blue-500/10 text-blue-400'
+                      : 'bg-blue-50 text-blue-600'
+                  }`}
+                >
+                  <Sparkles className="w-3 h-3" />
+                  AI-Powered Bridge
+                </div>
+                <h1
+                  className={`text-4xl font-bold mb-4 tracking-tight ${
+                    isDarkMode ? 'text-white' : 'text-gray-900'
+                  }`}
+                >
+                  Welcome to <span className="text-blue-600">DexFiat</span>
+                </h1>
+                <p
+                  className={`text-lg max-w-xl mx-auto leading-relaxed ${
+                    isDarkMode ? 'text-gray-400' : 'text-gray-500'
+                  }`}
+                >
+                  The most intuitive way to convert your Stellar assets to fiat
+                  currency. Follow the steps below to get started.
+                </p>
+              </div>
 
-          {/* No cards left placeholder or simple message */}
-          {isLoaded && visibleCards.length === 0 && (
-            <div
-              className={`text-center animate-in fade-in duration-500 ${isDarkMode ? 'text-gray-500' : 'text-gray-400'}`}
-            >
-              <p>Type a message below to start your conversion journey.</p>
-            </div>
+              {/* Help Cards Grid */}
+              {isLoaded && visibleCards.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full animate-in fade-in slide-in-from-bottom-4 duration-700">
+                  {visibleCards.map((card) => (
+                    <HelpCard
+                      key={card.id}
+                      {...card}
+                      onDismiss={dismissCard}
+                      isDarkMode={isDarkMode}
+                    />
+                  ))}
+                </div>
+              )}
+
+              {/* No cards left placeholder */}
+              {isLoaded && visibleCards.length === 0 && (
+                <div
+                  className={`text-center animate-in fade-in duration-500 ${
+                    isDarkMode ? 'text-gray-500' : 'text-gray-400'
+                  }`}
+                >
+                  <p>Type a message below to start your conversion journey.</p>
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (

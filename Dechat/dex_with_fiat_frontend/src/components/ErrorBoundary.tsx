@@ -10,11 +10,18 @@ interface ErrorBoundaryProps {
   message?: string;
   retryLabel?: string;
   onRetry?: () => void;
+  onError?: (error: Error, errorInfo: React.ErrorInfo) => void;
 }
 
 interface ErrorBoundaryState {
   hasError: boolean;
 }
+
+type WindowWithSentry = Window & {
+  Sentry?: {
+    captureException(error: Error, ctx: { extra: Record<string, unknown> }): void;
+  };
+};
 
 export default class ErrorBoundary extends React.Component<
   ErrorBoundaryProps,
@@ -31,6 +38,24 @@ export default class ErrorBoundary extends React.Component<
 
   public componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     console.error('Chat UI crashed:', error, errorInfo);
+
+    // Report to Sentry-compatible SDK if available on the page
+    const win = window as WindowWithSentry;
+    if (typeof win.Sentry?.captureException === 'function') {
+      win.Sentry.captureException(error, {
+        extra: { componentStack: errorInfo.componentStack ?? '' },
+      });
+    }
+
+    // Dispatch a custom event so other monitoring listeners can react
+    window.dispatchEvent(
+      new CustomEvent('app:error', {
+        detail: { error, componentStack: errorInfo.componentStack },
+        bubbles: true,
+      }),
+    );
+
+    this.props.onError?.(error, errorInfo);
   }
 
   public render() {

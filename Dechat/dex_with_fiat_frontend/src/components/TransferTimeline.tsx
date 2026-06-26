@@ -3,6 +3,7 @@
 import React from 'react';
 import { CheckCircle, Clock, XCircle, RefreshCw, Loader2 } from 'lucide-react';
 import CopyButton from '@/components/ui/CopyButton';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
 
 export type TransferStatus =
   | 'initiated'
@@ -118,6 +119,8 @@ export default function TransferTimeline({
   events,
   isPolling = false,
 }: TransferTimelineProps) {
+  const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+
   if (events.length === 0) {
     return (
       <p className="theme-text-muted text-xs text-center py-4">
@@ -164,7 +167,13 @@ export default function TransferTimeline({
                 role="img"
                 className={`relative z-10 flex-shrink-0 w-9 h-9 rounded-full border flex items-center justify-center ${meta.color}`}
               >
-                {meta.icon}
+                {event.status === 'pending' ? (
+                  <Loader2
+                    className={`w-4 h-4${prefersReducedMotion ? '' : ' animate-spin'}`}
+                  />
+                ) : (
+                  meta.icon
+                )}
               </span>
 
               {/* Label + timestamp */}
@@ -193,7 +202,9 @@ export default function TransferTimeline({
         {isPolling && (
           <li className="flex items-start gap-3 opacity-60">
             <span className="relative z-10 flex-shrink-0 w-9 h-9 rounded-full border border-dashed border-gray-500 flex items-center justify-center text-gray-500">
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader2
+                className={`w-4 h-4${prefersReducedMotion ? '' : ' animate-spin'}`}
+              />
             </span>
             <div className="flex-1 pb-1">
               <p className="theme-text-muted text-sm">Checking status…</p>

@@ -565,7 +565,7 @@ export default function BankDetailsModal({
     }, 'payout_confirm');
   };
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     chatTelemetry.fiatPayoutStep({ action: 'close', step, xlmAmount });
     // Reset all state before closing
     setStep(1);
@@ -590,7 +590,7 @@ export default function BankDetailsModal({
     setTransferReference('');
     setTransferStatus('pending');
     onClose();
-  };
+  }, [step, xlmAmount, onClose]);
 
   const handleSelectSavedBeneficiary = (beneficiary: Beneficiary) => {
     setSelectedSavedBeneficiary(beneficiary);
@@ -658,7 +658,7 @@ export default function BankDetailsModal({
     setSaveCustomName('');
   };
 
-  useAccessibleModal(isOpen, modalRef, onClose);
+  useAccessibleModal(isOpen, modalRef, handleClose);
 
   if (!isOpen) return null;
 
