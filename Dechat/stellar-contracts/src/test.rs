@@ -386,7 +386,7 @@ fn test_get_pending_admin_returns_address_and_expiry() {
     let env = Env::default();
     env.mock_all_auths();
     env.ledger().with_mut(|li| {
-        li.timestamp = 1_000;
+        li.sequence_number = 5_000;
     });
 
     let (_, bridge, _, _, _, _) = setup_bridge(&env, 100);
@@ -396,8 +396,12 @@ fn test_get_pending_admin_returns_address_and_expiry() {
 
     let pending = bridge.get_pending_admin().expect("pending admin");
     assert_eq!(pending.0, new_admin);
-    assert!(pending.1 > 1_000);
+    assert_eq!(pending.1, 5_000u64); // proposed_at is the ledger sequence
 
+    // Advance past the MIN_TIMELOCK_DELAY before accepting.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 5_000 + MIN_TIMELOCK_DELAY;
+    });
     bridge.accept_admin();
     assert_eq!(bridge.get_pending_admin(), None);
 }
@@ -4288,7 +4292,7 @@ fn test_execute_upgrade_before_delay_fails_with_upgrade_not_ready() {
     let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
 
     let proposed_wasm_hash = BytesN::from_array(&env, &[7u8; 32]);
-    bridge.propose_upgrade(&proposed_wasm_hash, &1000);
+    bridge.propose_upgrade(&proposed_wasm_hash, &1000, &0u32);
 
     let result = bridge.try_execute_upgrade();
     assert_eq!(result, Err(Ok(Error::UpgradeNotReady)));
@@ -4302,7 +4306,7 @@ fn test_cancel_upgrade_removes_pending_proposal() {
     let (_, bridge, _, _, _, _) = setup_bridge(&env, 500);
 
     let proposed_wasm_hash = BytesN::from_array(&env, &[9u8; 32]);
-    bridge.propose_upgrade(&proposed_wasm_hash, &1000);
+    bridge.propose_upgrade(&proposed_wasm_hash, &1000, &0u32);
     assert!(bridge.get_upgrade_proposal().is_some());
 
     bridge.cancel_upgrade();
@@ -4341,7 +4345,7 @@ fn test_execute_upgrade_after_delay_succeeds() {
     let wasm_hash = env
         .deployer()
         .upload_contract_wasm(Bytes::from_slice(&env, fixture_wasm.as_slice()));
-    bridge.propose_upgrade(&wasm_hash, &1000);
+    bridge.propose_upgrade(&wasm_hash, &1000, &0u32);
 
     let start = env.ledger().sequence();
     env.ledger().with_mut(|li| {

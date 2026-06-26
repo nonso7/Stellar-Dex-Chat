@@ -143,6 +143,14 @@ pub enum Error {
     ProposalAlreadyExecuted = 1106,
     ThresholdNotMet = 1107,
 
+    // --- 1200 series: Upgrade version guard ---
+    /// Returned by `propose_upgrade` when `new_version < current_version`.
+    DowngradeNotAllowed = 1201,
+
+    // --- 1300 series: Per-block deposit rate limiting ---
+    /// Returned by `deposit` when the user exceeds the per-ledger deposit cap.
+    DepositRateLimitExceeded = 1301,
+
 }
 
 // ── Models ────────────────────────────────────────────────────────────────
@@ -233,6 +241,8 @@ pub struct UserDailyVolume {
 pub struct UpgradeProposal {
     pub wasm_hash: BytesN<32>,
     pub executable_after: u32,
+    /// Minimum semantic version the new WASM must satisfy (must be ≥ current).
+    pub new_version: u32,
 }
 
 /// Tracks a user's rolling-window withdrawal amount for quota enforcement.
@@ -985,6 +995,16 @@ pub enum DataKey {
     // ── Issue #fee_vault_threshold: per-token fee vault threshold ────────
     FeeVaultThreshold(Address),
 
+    // ── Issue #1003: contract version migration guard ─────────────────────
+    /// Monotonically-increasing integer version stored after each upgrade.
+    ContractVersion,
+
+    // ── Issue #994: per-block deposit rate limiting ───────────────────────
+    /// Maximum deposits a single user may make within one ledger sequence.
+    MaxDepositsPerBlock,
+    /// Tracks (user, ledger_sequence) → deposit count for rate limiting.
+    DepositCountPerBlock(Address),
+
 }
 
 const ORACLE_PRICE_DECIMALS: i128 = 10_000_000;
@@ -1249,6 +1269,35 @@ impl FiatBridge {
             .has(&DataKey::Denied(from.clone()))
         {
             return Err(Error::AddressDenied);
+        }
+
+        // Issue #994: per-block (per-ledger) deposit rate limit.
+        let max_per_block: Option<u32> = env
+            .storage()
+            .instance()
+            .get(&DataKey::MaxDepositsPerBlock);
+        if let Some(max) = max_per_block {
+            if max > 0 {
+                let block_key = DataKey::DepositCountPerBlock(from.clone());
+                // Each entry is (ledger_sequence, count).
+                let (stored_ledger, count): (u32, u32) = env
+                    .storage()
+                    .temporary()
+                    .get(&block_key)
+                    .unwrap_or((current_ledger, 0));
+                let new_count = if stored_ledger == current_ledger {
+                    count.saturating_add(1)
+                } else {
+                    1
+                };
+                if new_count > max {
+                    return Err(Error::DepositRateLimitExceeded);
+                }
+                env.storage()
+                    .temporary()
+                    .set(&block_key, &(current_ledger, new_count));
+                env.storage().temporary().extend_ttl(&block_key, 2, 10);
+            }
         }
 
         // Registry & Limit
@@ -2447,6 +2496,23 @@ impl FiatBridge {
     ///
     /// - `ledgers`   – number of ledgers to wait before withdrawing.  0 disables the guard.
     /// - `threshold` – minimum deposit amount (inclusive) that triggers the cooldown.  0 disables.
+    /// Set the maximum number of deposits a single user may make per ledger.
+    ///
+    /// Pass `0` to disable the limit. Admin-only.
+    pub fn set_max_deposits_per_block(env: Env, max: u32) -> Result<(), Error> {
+        env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::MaxDepositsPerBlock, &max);
+        Ok(())
+    }
+
     pub fn set_withdrawal_cooldown(env: Env, ledgers: u32, threshold: i128) -> Result<(), Error> {
         let admin: Address = env
             .storage()
@@ -2635,25 +2701,13 @@ impl FiatBridge {
         if new_admin == admin {
             return Err(Error::SameAdmin);
         }
-<<<<<<< HEAD:stellar-contracts/src/lib.rs
-        let expiry_timestamp = env
-            .ledger()
-            .timestamp()
-            .checked_add((MIN_TIMELOCK_DELAY as u64) * 5)
-            .ok_or(Error::Overflow)?;
-=======
         let proposed_at: u32 = env.ledger().sequence();
->>>>>>> origin/main:Dechat/stellar-contracts/src/lib.rs
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
         env.storage()
             .instance()
-<<<<<<< HEAD:stellar-contracts/src/lib.rs
-            .set(&DataKey::PendingAdminExpiryTimestamp, &expiry_timestamp);
-=======
             .set(&DataKey::AdminTransferProposedAt, &proposed_at);
->>>>>>> origin/main:Dechat/stellar-contracts/src/lib.rs
         Ok(())
     }
 
@@ -2684,11 +2738,6 @@ impl FiatBridge {
 
         env.storage().instance().set(&DataKey::Admin, &pending);
         env.storage().instance().remove(&DataKey::PendingAdmin);
-<<<<<<< HEAD:stellar-contracts/src/lib.rs
-        env.storage()
-            .instance()
-            .remove(&DataKey::PendingAdminExpiryTimestamp);
-=======
         env.storage().instance().remove(&DataKey::AdminTransferProposedAt);
         Ok(())
     }
@@ -2712,7 +2761,6 @@ impl FiatBridge {
 
         env.storage().instance().remove(&DataKey::PendingAdmin);
         env.storage().instance().remove(&DataKey::AdminTransferProposedAt);
->>>>>>> origin/main:Dechat/stellar-contracts/src/lib.rs
         Ok(())
     }
 
@@ -4431,7 +4479,7 @@ impl FiatBridge {
         env.storage().instance().remove(&DataKey::PendingAdmin);
         env.storage()
             .instance()
-            .remove(&DataKey::PendingAdminExpiryTimestamp);
+            .remove(&DataKey::AdminTransferProposedAt);
         Ok(())
     }
 
@@ -4516,12 +4564,13 @@ impl FiatBridge {
     /// Returns the pending admin address and the ledger it was proposed on, or `None`.
     pub fn get_pending_admin(env: Env) -> Option<(Address, u64)> {
         let pending: Address = env.storage().instance().get(&DataKey::PendingAdmin)?;
-        let expiry_timestamp = env
+        let proposed_at: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::PendingAdminExpiryTimestamp)
+            .get::<_, u32>(&DataKey::AdminTransferProposedAt)
+            .map(u64::from)
             .unwrap_or(0);
-        Some((pending, expiry_timestamp))
+        Some((pending, proposed_at))
     }
 
     /// Returns the primary token address managed by this bridge.
@@ -6112,7 +6161,12 @@ impl FiatBridge {
     /// * [`Error::ContractPaused`]       – Contract is currently paused.
     /// * [`Error::UpgradeDelayTooShort`] – `delay < MIN_UPGRADE_DELAY`.
     /// * [`Error::Overflow`]             – `current_ledger + delay` overflows `u32`.
-    pub fn propose_upgrade(env: Env, wasm_hash: BytesN<32>, delay: u32) -> Result<(), Error> {
+    pub fn propose_upgrade(
+        env: Env,
+        wasm_hash: BytesN<32>,
+        delay: u32,
+        new_version: u32,
+    ) -> Result<(), Error> {
         env.storage().instance().extend_ttl(MIN_TTL, MAX_TTL);
 
         let admin: Address = env
@@ -6125,19 +6179,24 @@ impl FiatBridge {
         Self::require_not_paused(&env)?;
 
         // Boundary check (fix #668): reject delays that are too short.
-        // A delay of zero (or below the protocol minimum) would allow an
-        // immediate upgrade, defeating the purpose of the timelock entirely.
         require!(delay >= MIN_UPGRADE_DELAY, Error::UpgradeDelayTooShort);
 
-        // Overflow prevention (fix #668): use checked_add so that an extremely
-        // large `delay` value cannot wrap around or saturate to a value that
-        // does not accurately represent the requested delay.
+        // Overflow prevention (fix #668).
         let current_ledger = env.ledger().sequence();
         let executable_after = current_ledger.checked_add(delay).ok_or(Error::Overflow)?;
+
+        // Issue #1003: version migration guard — reject downgrades.
+        let current_version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(0);
+        require!(new_version >= current_version, Error::DowngradeNotAllowed);
 
         let proposal = UpgradeProposal {
             wasm_hash: wasm_hash.clone(),
             executable_after,
+            new_version,
         };
 
         env.storage()
@@ -6212,6 +6271,12 @@ impl FiatBridge {
         // re-entrant call (if ever possible) cannot replay it.
         env.storage().instance().remove(&DataKey::UpgradeProposal);
 
+        // Issue #1003: persist the new version so future proposals can be
+        // validated against it.
+        env.storage()
+            .instance()
+            .set(&DataKey::ContractVersion, &proposal.new_version);
+
         // Apply the WASM upgrade.  This replaces the contract's executable
         // bytecode atomically at the end of the current transaction.
         env.deployer()
@@ -6270,6 +6335,14 @@ impl FiatBridge {
     /// has been executed or cancelled.
     pub fn get_upgrade_proposal(env: Env) -> Option<UpgradeProposal> {
         env.storage().instance().get(&DataKey::UpgradeProposal)
+    }
+
+    /// Returns the current on-chain contract version (0 if never upgraded).
+    pub fn get_contract_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ContractVersion)
+            .unwrap_or(0)
     }
 
     // ── Issue #100: Multi-sig Logic ──────────────────────────────────────────
@@ -6526,3 +6599,9 @@ mod test_issue_681;
 
 #[cfg(test)]
 mod test_issue_970;
+
+#[cfg(test)]
+mod test_issue_1002;
+
+#[cfg(test)]
+mod test_issue_994_1003;

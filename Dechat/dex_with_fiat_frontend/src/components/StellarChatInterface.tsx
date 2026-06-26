@@ -29,6 +29,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useUserPreferences } from '@/contexts/UserPreferencesContext';
 import useBridgeStats from '@/hooks/useBridgeStats';
 import useChat from '@/hooks/useChat';
+import { useDeepLink } from '@/hooks/useDeepLink';
 import { getQueuedReadRequestsCount } from '@/lib/networkQueue';
 import {
   getAdmin,
@@ -137,6 +138,12 @@ function StellarChatInterfaceContent() {
     setTransactionReadyCallback,
     setIsAdmin: setChatIsAdmin,
   } = useChat();
+
+  // Issue #996: deep-link support — navigate to a session via /chat#<session-id>
+  const deepLinkState = useDeepLink(
+    loadChatSession,
+    (id) => id === currentSessionId,
+  );
 
   const {
     balance,
@@ -484,6 +491,19 @@ function StellarChatInterfaceContent() {
         )}
         {/* Main */}
         <div className="flex flex-col flex-1 min-w-0">
+          {/* Issue #996: deep-link error banner */}
+          {deepLinkState.status === 'not-found' && (
+            <div
+              role="alert"
+              className="flex items-center gap-2 bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm px-4 py-2 border-b border-red-200 dark:border-red-800"
+            >
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>
+                Session&nbsp;<code className="font-mono">{deepLinkState.sessionId}</code>&nbsp;was not found.
+                It may have been deleted or the link may be invalid.
+              </span>
+            </div>
+          )}
           {/* Header */}
           <header className="theme-surface theme-border flex-shrink-0 flex items-center justify-between px-4 py-3 border-b transition-colors duration-300">
             <div className="flex items-center gap-3">

@@ -69,7 +69,7 @@ fn propose_upgrade_rejects_zero_delay() {
     env.mock_all_auths();
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
-    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &0);
+    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &0, &0u32);
     assert_eq!(result, Err(Ok(Error::UpgradeDelayTooShort)));
 }
 
@@ -81,7 +81,7 @@ fn propose_upgrade_rejects_delay_below_minimum() {
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
     let too_short = MIN_UPGRADE_DELAY - 1;
-    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &too_short);
+    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &too_short, &0u32);
     assert_eq!(result, Err(Ok(Error::UpgradeDelayTooShort)));
 }
 
@@ -92,7 +92,7 @@ fn propose_upgrade_accepts_minimum_delay() {
     env.mock_all_auths();
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
-    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY);
+    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY, &0u32);
 
     let proposal = bridge
         .get_upgrade_proposal()
@@ -111,7 +111,7 @@ fn propose_upgrade_accepts_large_delay() {
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
     let large_delay = MIN_UPGRADE_DELAY * 10;
-    bridge.propose_upgrade(&dummy_wasm_hash(&env), &large_delay);
+    bridge.propose_upgrade(&dummy_wasm_hash(&env), &large_delay, &0u32);
 
     let proposal = bridge
         .get_upgrade_proposal()
@@ -134,7 +134,7 @@ fn propose_upgrade_overflow_prevention() {
     // Set the ledger sequence close to u32::MAX so that adding any
     // meaningful delay overflows.
     env.ledger().set_sequence_number(100);
-    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &u32::MAX);
+    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &u32::MAX, &0u32);
     assert_eq!(result, Err(Ok(Error::Overflow)));
 }
 
@@ -160,7 +160,7 @@ fn execute_upgrade_before_timelock_returns_not_ready() {
     env.mock_all_auths();
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
-    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY);
+    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY, &0u32);
 
     // Advance ledger by less than the required delay — still locked.
     let current = env.ledger().sequence();
@@ -180,7 +180,7 @@ fn execute_upgrade_at_exact_boundary_returns_not_ready() {
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
     let start = env.ledger().sequence();
-    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY);
+    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY, &0u32);
 
     // Set ledger to exactly executable_after — should still be locked.
     env.ledger().set_sequence_number(start + MIN_UPGRADE_DELAY);
@@ -210,7 +210,7 @@ fn cancel_upgrade_removes_proposal() {
     env.mock_all_auths();
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
-    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY);
+    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY, &0u32);
     assert!(bridge.get_upgrade_proposal().is_some());
 
     bridge.cancel_upgrade();
@@ -225,7 +225,7 @@ fn cancel_upgrade_twice_returns_error() {
     env.mock_all_auths();
     let (_, bridge, _, _, _, _) = setup_bridge(&env);
 
-    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY);
+    bridge.propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY, &0u32);
     bridge.cancel_upgrade();
 
     let result = bridge.try_cancel_upgrade();
@@ -243,7 +243,7 @@ fn propose_upgrade_while_paused_returns_error() {
 
     bridge.pause();
 
-    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY);
+    let result = bridge.try_propose_upgrade(&dummy_wasm_hash(&env), &MIN_UPGRADE_DELAY, &0u32);
     assert_eq!(result, Err(Ok(Error::ContractPaused)));
 }
 
