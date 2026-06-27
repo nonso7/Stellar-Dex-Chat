@@ -2377,6 +2377,8 @@ impl FiatBridge {
             &execute_amount,
         );
 
+        Self::require_not_paused(&env)?;
+
         let tier = request.risk_tier;
         if execute_amount == request.amount {
             env.storage()
