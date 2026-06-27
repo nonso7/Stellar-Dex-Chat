@@ -24,6 +24,10 @@ pub const MIN_TTL: u32 = 518_400;
 pub const MAX_TTL: u32 = 535_680;
 /// Maximum byte length of a deposit reference string.
 const MAX_REFERENCE_LEN: u32 = 64;
+/// Canonical all-zero Stellar account strkey (G…), used to detect the "zero address".
+const ZERO_ACCOUNT_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+/// Canonical all-zero Stellar contract strkey (C…), used to detect the "zero address".
+const ZERO_CONTRACT_STRKEY: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
 /// Number of ledgers in a 24-hour rolling window (~5 s/ledger × 17 280 = 24 h).
 ///
 /// Used for daily deposit limits, fiat volume caps, and withdrawal quotas.
@@ -94,6 +98,8 @@ pub enum Error {
     OperatorDailyLimitExceeded = 313,
     ExceedsLimitMaxCap = 314,
     MaxDeniedReached = 315,
+    /// Returned by `init` when the token address does not implement the SEP-41 token interface.
+    InvalidToken = 316,
 
     // --- 400 series: Funds & Balances ---
     InsufficientFunds = 401,
@@ -1111,6 +1117,7 @@ impl FiatBridge {
     /// - [`Error::MaxSignersReached`]  if `signers.len()` > [`MAX_SIGNERS`].
     /// - [`Error::InvalidThreshold`]   if `threshold` is 0 or > `signers.len()`.
     /// - [`Error::DuplicateSigner`]    if `signers` contains duplicate addresses.
+    /// - [`Error::InvalidToken`]       if `token` does not implement the SEP-41 token interface.
     pub fn init(
         env: Env,
         admin: Address,
@@ -1143,6 +1150,16 @@ impl FiatBridge {
             require!(!seen.contains(&s), Error::DuplicateSigner);
             seen.push_back(s);
         }
+
+        // ── Issue #1037: verify the token implements the SEP-41 interface ──
+        // Probe a mandatory SEP-41 read method (`decimals`) on the supplied
+        // address. A non-token contract — or a plain account address — cannot
+        // answer this call, so we reject it before any state is written and
+        // before funds can ever be locked against an unusable token.
+        require!(
+            token::Client::new(&env, &token).try_decimals().is_ok(),
+            Error::InvalidToken
+        );
 
         env.storage()
             .instance()
@@ -2152,6 +2169,21 @@ impl FiatBridge {
             return Err(Error::InvalidRecipient);
         }
 
+        // ── Issue #1017: reject requests exceeding the user's deposited balance ──
+        // The global liability/balance checks above only guarantee the *pool*
+        // can cover the request — without a per-user check a depositor could
+        // request more than they ever deposited and drain other users' funds
+        // (and over-requests would panic at settlement). Bound the request to
+        // what this recipient has actually deposited.
+        let user_deposited: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::UserDeposited(to.clone()))
+            .unwrap_or(0);
+        if amount > user_deposited {
+            return Err(Error::InsufficientFunds);
+        }
+
         // Denylist
         if env.storage().persistent().has(&DataKey::Denied(to.clone())) {
             return Err(Error::AddressDenied);
@@ -3100,6 +3132,18 @@ impl FiatBridge {
         admin.require_auth();
 
         // ── Parameter validation ───────────────────────────────────────────
+        // ── Issue #1026: reject the zero address ──
+        // Setting the recovery target to the all-zero account/contract address
+        // would permanently lock any funds routed through emergency recovery,
+        // so it is rejected explicitly before any state mutation.
+        let zero_account =
+            Address::from_string(&soroban_sdk::String::from_str(&env, ZERO_ACCOUNT_STRKEY));
+        let zero_contract =
+            Address::from_string(&soroban_sdk::String::from_str(&env, ZERO_CONTRACT_STRKEY));
+        if recovery == zero_account || recovery == zero_contract {
+            return Err(Error::InvalidRecipient);
+        }
+
         if cap_limit <= 0 {
             return Err(Error::ZeroAmount);
         }
@@ -5127,21 +5171,24 @@ impl FiatBridge {
 
     /// Returns the cumulative amount deposited across all users.
     ///
-    /// # Errors
-    /// - [`Error::NotInitialized`]      if the contract has not been initialised.
-    /// - [`Error::TokenNotWhitelisted`] if no token config exists.
-    pub fn get_total_deposited(env: Env) -> Result<i128, Error> {
-        let tok = env
+    /// Issue #1023: this is a public, unauthenticated view intended for
+    /// dashboards. It returns `0` on empty state — before initialization or
+    /// when no token config exists yet — rather than erroring, so callers can
+    /// treat the result as a plain running total.
+    pub fn get_total_deposited(env: Env) -> i128 {
+        match env
             .storage()
             .instance()
             .get::<_, Address>(&DataKey::Token)
-            .ok_or(Error::NotInitialized)?;
-        Ok(env
-            .storage()
-            .persistent()
-            .get::<_, TokenConfig>(&DataKey::TokenRegistry(tok))
-            .ok_or(Error::InternalError)?
-            .total_deposited)
+        {
+            Some(tok) => env
+                .storage()
+                .persistent()
+                .get::<_, TokenConfig>(&DataKey::TokenRegistry(tok))
+                .map(|c| c.total_deposited)
+                .unwrap_or(0),
+            None => 0,
+        }
     }
     /// Returns the current withdrawal lock period in ledgers.
     pub fn get_lock_period(env: Env) -> u32 {
@@ -7109,3 +7156,6 @@ mod test_issue_994_1003;
 
 #[cfg(test)]
 mod test_issue_572;
+
+#[cfg(test)]
+mod test_issues_1017_1023_1026_1037;
