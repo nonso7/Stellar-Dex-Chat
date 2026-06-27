@@ -24,6 +24,10 @@ pub const MIN_TTL: u32 = 518_400;
 pub const MAX_TTL: u32 = 535_680;
 /// Maximum byte length of a deposit reference string.
 const MAX_REFERENCE_LEN: u32 = 64;
+/// Canonical all-zero Stellar account strkey (G…), used to detect the "zero address".
+const ZERO_ACCOUNT_STRKEY: &str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
+/// Canonical all-zero Stellar contract strkey (C…), used to detect the "zero address".
+const ZERO_CONTRACT_STRKEY: &str = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4";
 /// Number of ledgers in a 24-hour rolling window (~5 s/ledger × 17 280 = 24 h).
 ///
 /// Used for daily deposit limits, fiat volume caps, and withdrawal quotas.
@@ -3100,6 +3104,18 @@ impl FiatBridge {
         admin.require_auth();
 
         // ── Parameter validation ───────────────────────────────────────────
+        // ── Issue #1026: reject the zero address ──
+        // Setting the recovery target to the all-zero account/contract address
+        // would permanently lock any funds routed through emergency recovery,
+        // so it is rejected explicitly before any state mutation.
+        let zero_account =
+            Address::from_string(&soroban_sdk::String::from_str(&env, ZERO_ACCOUNT_STRKEY));
+        let zero_contract =
+            Address::from_string(&soroban_sdk::String::from_str(&env, ZERO_CONTRACT_STRKEY));
+        if recovery == zero_account || recovery == zero_contract {
+            return Err(Error::InvalidRecipient);
+        }
+
         if cap_limit <= 0 {
             return Err(Error::ZeroAmount);
         }
