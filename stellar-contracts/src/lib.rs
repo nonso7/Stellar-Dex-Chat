@@ -514,6 +514,12 @@ pub struct IsDeniedCheckedEvent {
 }
 
 #[contractevent]
+#[derive(Clone, Debug)]
+pub struct ReceiptOobEvent {
+    pub version: u32,
+}
+
+#[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawalExpiredEvent {
     #[topic]
@@ -2592,7 +2598,10 @@ impl FiatBridge {
     pub fn get_receipt_by_index(env: Env, idx: u64) -> Option<Receipt> {
         let max_receipts: u64 = env.storage().instance().get(&DataKey::ReceiptCounter).unwrap_or(0);
         if idx >= max_receipts {
-            return None; // Circuit breaker triggers to prevent out of bounds execution and excessive cycles
+            // Circuit breaker: emit event and return None to prevent out-of-bounds
+            // execution and excessive compute cycles
+            ReceiptOobEvent { version: EVENT_VERSION }.publish(&env);
+            return None;
         }
         let receipt_hash: BytesN<32> = env
             .storage()

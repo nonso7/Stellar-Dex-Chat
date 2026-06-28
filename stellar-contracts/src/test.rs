@@ -2965,6 +2965,62 @@ fn test_get_receipt_by_index_nonexistent_index() {
     assert_eq!(bridge.get_receipt_by_index(&u64::MAX), None);
 }
 
+// ── get_receipt_by_index circuit breaker tests ───────────────────────────
+
+#[test]
+fn test_get_receipt_by_index_circuit_breaker_emits_event_on_out_of_bounds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, bridge, _, token_addr, _, token_sac) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+    token_sac.mint(&user, &5_000);
+
+    bridge.deposit(&user, &100, &token_addr, &Bytes::new(&env), &0, &0, &None);
+
+    // Out-of-bounds access should return None (circuit breaker fires)
+    let result = bridge.get_receipt_by_index(&99);
+    assert!(result.is_none(), "circuit breaker must return None for out-of-bounds index");
+
+    // At least one ReceiptIndexOutOfBoundsEvent should have been emitted
+    let events = env.events().all().filter_by_contract(&contract_id);
+    let raw = events.events();
+    assert!(
+        !raw.is_empty(),
+        "ReceiptIndexOutOfBoundsEvent should be emitted when circuit breaker trips"
+    );
+}
+
+#[test]
+fn test_get_receipt_by_index_circuit_breaker_u64_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+
+    // u64::MAX with zero receipts: circuit breaker must not panic
+    let result = bridge.get_receipt_by_index(&u64::MAX);
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_get_receipt_by_index_circuit_breaker_empty_store() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_id, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+
+    // No deposits at all — any index triggers the circuit breaker
+    let result = bridge.get_receipt_by_index(&0);
+    assert!(result.is_none());
+
+    let events = env.events().all().filter_by_contract(&contract_id);
+    assert!(
+        !events.events().is_empty(),
+        "circuit breaker event must fire even for index 0 when store is empty"
+    );
+}
+
 #[test]
 fn test_memo_hash_zero_rejected() {
     let env = Env::default();
