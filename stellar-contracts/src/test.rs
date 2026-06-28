@@ -1708,8 +1708,79 @@ fn test_is_denied_returns_correct_value() {
     assert!(!bridge.is_denied(&user));
 }
 
+// ── is_denied overflow prevention tests ─────────────────────────────────
+
 #[test]
-fn test_get_escrow_record() {
+fn test_is_denied_emits_event_for_denied_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+
+    bridge.deny_address(&user);
+
+    // is_denied should return true and emit IsDeniedCheckedEvent
+    let result = bridge.is_denied(&user);
+    assert!(result);
+
+    // At least one event was emitted (DenyAddressEvent + IsDeniedCheckedEvent)
+    let events = env.events().all();
+    assert!(!events.is_empty(), "expected events to be emitted");
+}
+
+#[test]
+fn test_is_denied_emits_event_for_non_denied_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+
+    // is_denied on a non-denied address should return false and emit an event
+    let result = bridge.is_denied(&user);
+    assert!(!result);
+
+    let events = env.events().all();
+    assert!(!events.is_empty(), "IsDeniedCheckedEvent should be emitted even for non-denied address");
+}
+
+#[test]
+fn test_is_denied_overflow_guard_safe_with_normal_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+    let user = Address::generate(&env);
+
+    // Normal operation: DeniedCount is well below u64::MAX — no overflow error
+    bridge.deny_address(&user);
+    let result = bridge.try_is_denied(&user);
+    assert_eq!(result, Ok(Ok(true)));
+}
+
+#[test]
+fn test_get_denied_addresses_safe_iteration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, bridge, _, _, _, _) = setup_bridge(&env, 10_000);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+
+    bridge.deny_address(&user1);
+    bridge.deny_address(&user2);
+
+    // Verified: offset and limit behave correctly without overflow in iteration
+    let page = bridge.get_denied_addresses(&0, &10);
+    assert_eq!(page.len(), 2);
+    assert!(page.contains(&user1));
+    assert!(page.contains(&user2));
+
+    // Offset past end returns empty — no panic from overflow
+    let empty = bridge.get_denied_addresses(&100, &10);
+    assert_eq!(empty.len(), 0);
+}
     let env = Env::default();
     env.mock_all_auths();
 

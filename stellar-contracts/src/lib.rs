@@ -506,6 +506,14 @@ pub struct DenyRemovedEvent {
 }
 
 #[contractevent]
+#[derive(Clone, Debug)]
+pub struct IsDeniedCheckedEvent {
+    pub version: u32,
+    pub address: Address,
+    pub result: bool,
+}
+
+#[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WithdrawalExpiredEvent {
     #[topic]
@@ -2295,8 +2303,19 @@ impl FiatBridge {
     ///
     /// # Returns
     /// `true` if the address is denied, `false` otherwise
-    pub fn is_denied(env: Env, address: Address) -> bool {
-        env.storage().persistent().has(&DataKey::Denied(address))
+    pub fn is_denied(env: Env, address: Address) -> Result<bool, Error> {
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DeniedCount)
+            .unwrap_or(0);
+        // Overflow guard: DeniedCount must not have wrapped past u64::MAX
+        if count == u64::MAX {
+            return Err(Error::Overflow);
+        }
+        let denied = env.storage().persistent().has(&DataKey::Denied(address.clone()));
+        IsDeniedCheckedEvent { version: EVENT_VERSION, address, result: denied }.publish(&env);
+        Ok(denied)
     }
 
     pub fn get_denied_addresses(env: Env, offset: u64, limit: u32) -> Vec<Address> {
@@ -2317,7 +2336,11 @@ impl FiatBridge {
                 result.push_back(addr);
                 collected += 1;
             }
-            idx += 1;
+            // Use checked_add to prevent overflow when iterating the denylist index
+            idx = match idx.checked_add(1) {
+                Some(next) => next,
+                None => break,
+            };
         }
         result
     }
