@@ -3771,3 +3771,6 @@ impl FiatBridge {
 
 #[cfg(any(test, feature = "testutils"))]
 mod test;
+
+#[cfg(test)]
+mod test_oracle_staleness;

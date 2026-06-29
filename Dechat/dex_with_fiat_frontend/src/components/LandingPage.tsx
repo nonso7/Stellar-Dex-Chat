@@ -233,7 +233,7 @@ export default function LandingPage() {
       <main id="landing-main" aria-label="DexFiat product overview">
         {/* Hero Section */}
         <section
-          className="relative min-h-screen flex items-center justify-center px-4 overflow-hidden"
+          className="relative min-h-screen flex items-center justify-center px-4 overflow-x-hidden"
           aria-labelledby="landing-hero-heading"
         >
           {/* Animated Background Elements */}
@@ -243,17 +243,17 @@ export default function LandingPage() {
           </div>
 
           <div
-            className={`relative z-10 text-center max-w-5xl mx-auto transform transition-all duration-1000 ${heroVisible ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'}`}
+            className={`relative z-10 text-center w-full max-w-5xl mx-auto px-4 transform transition-all duration-1000 ${heroVisible ? 'translate-y-0 opacity-100' : 'translate-y-12 opacity-0'}`}
           >
             <h1
               id="landing-hero-heading"
-              className="text-5xl md:text-7xl font-bold mb-6 leading-tight"
+              className="text-3xl sm:text-5xl md:text-7xl font-bold mb-6 leading-tight break-words"
             >
               <span className="text-[var(--color-primary)]">XLM-to-Fiat</span>{' '}
               Bridge
             </h1>
 
-            <p className="text-xl md:text-2xl text-[var(--color-text-secondary)] mb-12 max-w-3xl mx-auto leading-relaxed">
+            <p className="text-base sm:text-xl md:text-2xl text-[var(--color-text-secondary)] mb-12 max-w-3xl mx-auto leading-relaxed">
               Convert Stellar Lumens (XLM) to fiat currency instantly through
               our AI-powered chat interface and Soroban smart contracts.
             </p>

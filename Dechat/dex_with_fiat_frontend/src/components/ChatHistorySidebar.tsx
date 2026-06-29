@@ -276,7 +276,6 @@ export default function ChatHistorySidebar({
   const filteredSessionIds = filteredSessions.map((s) => s.id).join(',');
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const scrollSnapshotRef = useRef<{ top: number; height: number } | null>(null);
   const draggedIdRef = useRef<string | null>(null);
   const dragOverIdRef = useRef<string | null>(null);
 
@@ -334,7 +333,7 @@ export default function ChatHistorySidebar({
     isLoadingMore: unpinnedIsLoadingMore,
     loadMore: loadMoreUnpinned,
     setVisibleCount: setUnpinnedVisibleCount,
-  } = useSessionPagination(filteredUnpinned, 60);
+  } = useSessionPagination(filteredUnpinned, 20);
 
   useEffect(() => {
     if (isCollapsed || isLoading) return;
@@ -359,28 +358,24 @@ export default function ChatHistorySidebar({
     }
   }, [currentSessionId, filteredUnpinned, visibleUnpinned.length, setUnpinnedVisibleCount]);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollContainerRef.current;
-    if (!el) return;
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
-    if (el.scrollTop < 160 && unpinnedHasMore && !unpinnedIsLoadingMore) {
-      // take a snapshot so we can preserve visual position after loading
-      scrollSnapshotRef.current = { top: el.scrollTop, height: el.scrollHeight };
-      loadMoreUnpinned();
-    }
-  }, [unpinnedHasMore, unpinnedIsLoadingMore, loadMoreUnpinned]);
-
-  // When a loadMore finishes, restore scroll position to avoid jump
+  // IntersectionObserver: trigger loadMore when sentinel scrolls into view
   useEffect(() => {
-    if (unpinnedIsLoadingMore) return;
-    const snap = scrollSnapshotRef.current;
-    const el = scrollContainerRef.current;
-    if (snap && el) {
-      const newHeight = el.scrollHeight;
-      el.scrollTop = newHeight - snap.height + snap.top;
-      scrollSnapshotRef.current = null;
-    }
-  }, [unpinnedIsLoadingMore]);
+    const sentinel = loadMoreSentinelRef.current;
+    if (!sentinel || !unpinnedHasMore) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && unpinnedHasMore && !unpinnedIsLoadingMore) {
+          loadMoreUnpinned();
+        }
+      },
+      { threshold: 0.1 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [unpinnedHasMore, unpinnedIsLoadingMore, loadMoreUnpinned]);
 
   // ── Optimistic delete with undo ──────────────────────────────────────────
   const handleDeleteSession = useCallback(
@@ -647,7 +642,7 @@ export default function ChatHistorySidebar({
           )}
         </div>
 
-        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
           {isLoading ? (
             <SkeletonSidebar />
           ) : (
@@ -822,6 +817,26 @@ export default function ChatHistorySidebar({
                             recentlyToggledPinId={recentlyToggledPinId}
                           />
                         ))}
+
+                        {/* Load-more sentinel — IntersectionObserver triggers next page */}
+                        {unpinnedHasMore && !isCollapsed && (
+                          <div ref={loadMoreSentinelRef} className="py-2 flex justify-center">
+                            {unpinnedIsLoadingMore ? (
+                              <div
+                                className="w-4 h-4 border-2 border-[var(--color-primary)] border-t-transparent rounded-full animate-spin"
+                                aria-label="Loading more conversations"
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={loadMoreUnpinned}
+                                className="text-xs theme-text-muted hover:theme-text-primary transition-colors px-3 py-1 rounded hover:bg-[var(--color-surface-muted)]"
+                              >
+                                Load more
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </>
                     )}
                   </>
