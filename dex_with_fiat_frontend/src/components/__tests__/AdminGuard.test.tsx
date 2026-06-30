@@ -10,7 +10,11 @@ vi.mock('@/lib/stellarContract');
 // Avoid JSX in vi.mock factory (hoisted before JSX transform). Use createElement at runtime.
 vi.mock('@/components/LandingPage', () => ({
   default: function MockLandingPage() {
-    return React.createElement('div', { 'data-testid': 'landing-page' }, 'Landing Page');
+    return React.createElement(
+      'div',
+      { 'data-testid': 'landing-page' },
+      'Landing Page',
+    );
   },
 }));
 
@@ -27,7 +31,7 @@ describe('AdminGuard', () => {
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     expect(await screen.findByTestId('landing-page')).toBeInTheDocument();
@@ -36,35 +40,44 @@ describe('AdminGuard', () => {
 
   it('shows error if connected address has invalid format (Zod validation)', async () => {
     vi.mocked(useStellarWallet).mockReturnValue({
-      connection: { address: 'invalid-address-not-starting-with-g-or-correct-length' },
+      connection: {
+        address: 'invalid-address-not-starting-with-g-or-correct-length',
+      },
     } as any);
 
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
-    expect(await screen.findByText('Invalid wallet address format. Access denied.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Invalid wallet address format. Access denied.'),
+    ).toBeInTheDocument();
   });
 
   it('shows error if contract admin address has invalid format (Zod validation)', async () => {
     vi.mocked(useStellarWallet).mockReturnValue({
-      connection: { address: 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDE' }, // 56 chars
+      connection: {
+        address: 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABC',
+      }, // 56 chars
     } as any);
     vi.mocked(getAdmin).mockResolvedValue('invalid-admin-address');
 
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
-    expect(await screen.findByText('Invalid contract configuration. Access denied.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Invalid contract configuration. Access denied.'),
+    ).toBeInTheDocument();
   });
 
   it('renders children when connected address matches admin address exactly', async () => {
-    const validAddr = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDE';
+    const validAddr =
+      'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABC';
     vi.mocked(useStellarWallet).mockReturnValue({
       connection: { address: validAddr },
     } as any);
@@ -73,15 +86,16 @@ describe('AdminGuard', () => {
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     expect(await screen.findByTestId('protected-content')).toBeInTheDocument();
   });
 
   it('renders landing page when valid connected address does not match valid admin address', async () => {
-    const userAddr = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDE';
-    const adminAddr = 'G1234567890123456789012345678901234567890123456789012345';
+    const userAddr = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABC';
+    const adminAddr =
+      'G1234567890123456789012345678901234567890123456789012345';
     vi.mocked(useStellarWallet).mockReturnValue({
       connection: { address: userAddr },
     } as any);
@@ -90,7 +104,7 @@ describe('AdminGuard', () => {
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     expect(await screen.findByTestId('landing-page')).toBeInTheDocument();
@@ -98,13 +112,16 @@ describe('AdminGuard', () => {
 });
 
 describe('AdminGuard — auto-scroll on access granted (#490)', () => {
-  const validAddr = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDE';
+  const validAddr = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABC';
   let scrollToSpy: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
     scrollToSpy = vi.fn();
-    Object.defineProperty(window, 'scrollTo', { value: scrollToSpy, writable: true });
+    Object.defineProperty(window, 'scrollTo', {
+      value: scrollToSpy,
+      writable: true,
+    });
     vi.mocked(useStellarWallet).mockReturnValue({
       connection: { address: validAddr },
     } as any);
@@ -116,7 +133,7 @@ describe('AdminGuard — auto-scroll on access granted (#490)', () => {
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     await waitFor(() => {
@@ -127,13 +144,14 @@ describe('AdminGuard — auto-scroll on access granted (#490)', () => {
   });
 
   it('does not scroll when access is denied', async () => {
-    const adminAddr = 'G1234567890123456789012345678901234567890123456789012345';
+    const adminAddr =
+      'G1234567890123456789012345678901234567890123456789012345';
     vi.mocked(getAdmin).mockResolvedValue(adminAddr);
 
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     await waitFor(() => {
@@ -149,7 +167,7 @@ describe('AdminGuard — auto-scroll on access granted (#490)', () => {
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     await waitFor(() => {
@@ -161,7 +179,7 @@ describe('AdminGuard — auto-scroll on access granted (#490)', () => {
 });
 
 describe('AdminGuard — offline retry queue', () => {
-  const validAddr = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABCDE';
+  const validAddr = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZABC';
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -172,16 +190,22 @@ describe('AdminGuard — offline retry queue', () => {
 
   afterEach(() => {
     // Restore navigator.onLine to its default (true) after each test.
-    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+    Object.defineProperty(navigator, 'onLine', {
+      value: true,
+      configurable: true,
+    });
   });
 
   it('shows the offline banner and queues a retry when navigator.onLine is false', async () => {
-    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    Object.defineProperty(navigator, 'onLine', {
+      value: false,
+      configurable: true,
+    });
 
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     expect(await screen.findByText(/you are offline/i)).toBeInTheDocument();
@@ -192,20 +216,26 @@ describe('AdminGuard — offline retry queue', () => {
   });
 
   it('retries the admin check and grants access when connection is restored', async () => {
-    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    Object.defineProperty(navigator, 'onLine', {
+      value: false,
+      configurable: true,
+    });
     vi.mocked(getAdmin).mockResolvedValue(validAddr);
 
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     // Offline banner visible
     expect(await screen.findByText(/you are offline/i)).toBeInTheDocument();
 
     // Simulate coming back online
-    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+    Object.defineProperty(navigator, 'onLine', {
+      value: true,
+      configurable: true,
+    });
     await act(async () => {
       window.dispatchEvent(new Event('online'));
     });
@@ -216,20 +246,26 @@ describe('AdminGuard — offline retry queue', () => {
   });
 
   it('sets isOnline to false and does not retry when offline event fires', async () => {
-    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+    Object.defineProperty(navigator, 'onLine', {
+      value: true,
+      configurable: true,
+    });
     vi.mocked(getAdmin).mockResolvedValue(validAddr);
 
     render(
       <AdminGuard>
         <div data-testid="protected-content">Secret content</div>
-      </AdminGuard>
+      </AdminGuard>,
     );
 
     // Initially online — content is shown
     expect(await screen.findByTestId('protected-content')).toBeInTheDocument();
 
     // Go offline
-    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true });
+    Object.defineProperty(navigator, 'onLine', {
+      value: false,
+      configurable: true,
+    });
     await act(async () => {
       window.dispatchEvent(new Event('offline'));
     });
